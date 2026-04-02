@@ -30,7 +30,8 @@
         }
         .nav-item.active {
             color: #4f46e5;
-            transform: scale(1.1) translateY(-8px);
+            transform: scale(1.1) translateY(-4px);
+            font-weight: bold;
         }
         .calendar-day {
             aspect-ratio: 1 / 1.2;
@@ -60,10 +61,9 @@
     <div id="root"></div>
 
     <!-- Firebase 및 React 통합 스크립트 -->
-    <!-- type="text/babel"과 data-type="module"을 함께 사용하여 JSX와 Import를 모두 처리합니다 -->
     <script type="text/babel" data-type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, onSnapshot, query, doc, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, doc, updateDoc, arrayUnion, arrayRemove, getDoc, setDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
         // [사용자 Firebase 설정]
@@ -81,86 +81,177 @@
         const db = getFirestore(app);
         const auth = getAuth(app);
         
-        // 데이터 저장 경로 식별자
         const appId = "opo-digital-bookroad-v5";
 
         const { useState, useEffect } = React;
 
         const KDC_LABELS = {
-            "000": "총류", "100": "철학", "200": "종교", "300": "사회과학", "400": "자연과학",
-            "500": "기술과학", "600": "예술", "700": "언어", "800": "문학", "900": "역사"
+            "000": "📂 000 총류", 
+            "100": "🧠 100 철학", 
+            "200": "🙏 200 종교", 
+            "300": "🤝 300 사회과학", 
+            "400": "🌿 400 자연과학",
+            "500": "⚙️ 500 기술과학", 
+            "600": "🎨 600 예술", 
+            "700": "🗣️ 700 언어", 
+            "800": "📚 800 문학", 
+            "900": "🗺️ 900 역사"
         };
 
         function App() {
-            const [user, setUser] = useState(null);
-            const [userName, setUserName] = useState("");
-            const [userNo, setUserNo] = useState("");
+            const [user, setUser] = useState(null); // Firebase Auth User
+            const [appUser, setAppUser] = useState(null); // Firestore User Data
+            const [isLoginView, setIsLoginView] = useState(true);
+            
+            // Input States
+            const [loginId, setLoginId] = useState("");
+            const [loginPw, setLoginPw] = useState("");
+            const [signupName, setSignupName] = useState("");
+            const [signupNo, setSignupNo] = useState("");
+
             const [activeTab, setActiveTab] = useState('feed');
             const [posts, setPosts] = useState([]);
             const [secrets, setSecrets] = useState([]);
+            const [allSecrets, setAllSecrets] = useState([]); // Admin only
             const [alert, setAlert] = useState({ show: false, msg: '', icon: '' });
             const [showComments, setShowComments] = useState(null);
             const [commentInput, setCommentInput] = useState("");
             const [selectedLifeImg, setSelectedLifeImg] = useState(null);
 
-            // 1. 인증 처리
+            // 1. 초기 인증 및 세션 확인
             useEffect(() => {
                 const initAuth = async () => {
                     await signInAnonymously(auth);
                 };
                 initAuth();
 
-                const unsubAuth = onAuthStateChanged(auth, (userData) => {
+                const unsubAuth = onAuthStateChanged(auth, async (userData) => {
                     if (userData) {
                         setUser(userData);
-                        const saved = localStorage.getItem('opo_user_v5_info');
-                        if (saved) {
-                            const parsed = JSON.parse(saved);
-                            setUserName(parsed.name);
-                            setUserNo(parsed.no);
+                        const savedId = localStorage.getItem('opo_login_id');
+                        if (savedId) {
+                            fetchAppUser(savedId);
                         }
                     }
                 });
                 return () => unsubAuth();
             }, []);
 
+            // 앱 사용자 정보 가져오기
+            const fetchAppUser = async (id) => {
+                const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', id);
+                const userSnap = await getDoc(userRef);
+                if (userSnap.exists()) {
+                    setAppUser(userSnap.data());
+                } else {
+                    localStorage.removeItem('opo_login_id');
+                }
+            };
+
             // 2. 실시간 데이터 동기화
             useEffect(() => {
-                if (!user) return;
+                if (!appUser) return;
 
+                // 전체 게시글
                 const postsColl = collection(db, 'artifacts', appId, 'public', 'data', 'posts');
                 const unsubPosts = onSnapshot(postsColl, (snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setPosts(data.sort((a, b) => b.timestamp - a.timestamp));
                 });
 
-                const secretsColl = collection(db, 'artifacts', appId, 'users', user.uid, 'secrets');
+                // 내 비밀 우체통
+                const secretsColl = collection(db, 'artifacts', appId, 'users', appUser.id, 'secrets');
                 const unsubSecrets = onSnapshot(secretsColl, (snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setSecrets(data.sort((a, b) => a.timestamp - b.timestamp));
                 });
 
-                return () => { unsubPosts(); unsubSecrets(); };
-            }, [user]);
+                // 관리자용 전체 우체통 (교사 계정일 때만)
+                if (appUser.role === 'admin') {
+                    // 모든 사용자의 secrets를 가져오려면 복잡한 쿼리가 필요하므로, 
+                    // 간단하게 artifacts/{appId}/public/data/all_secrets 컬렉션에 복사본을 저장하거나 관리자만 볼 수 있는 방식으로 구성합니다.
+                    // 여기서는 규칙에 따라 artifacts/{appId}/public/data/secrets_admin 컬렉션을 따로 활용하는 방식으로 예시를 듭니다.
+                    const allSecretsColl = collection(db, 'artifacts', appId, 'public', 'data', 'all_secrets');
+                    onSnapshot(allSecretsColl, (snapshot) => {
+                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setAllSecrets(data.sort((a, b) => b.timestamp - a.timestamp));
+                    });
+                }
 
-            const handleLogin = () => {
-                if (!userName || !userNo) return showAlert('이름과 번호를 써주세요!', '👀');
-                localStorage.setItem('opo_user_v5_info', JSON.stringify({ name: userName, no: userNo }));
-                showAlert(`${userName} 작가님 반가워요!`, '🎈');
-            };
+                return () => { unsubPosts(); unsubSecrets(); };
+            }, [appUser]);
 
             const showAlert = (msg, icon) => setAlert({ show: true, msg, icon: icon || '🌟' });
 
+            // 회원가입
+            const handleSignup = async () => {
+                if (!loginId || !loginPw || !signupName || !signupNo) {
+                    return showAlert("빈칸을 모두 채워주세요!", "✍️");
+                }
+                
+                const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', loginId);
+                const userSnap = await getDoc(userRef);
+                
+                if (userSnap.exists()) {
+                    return showAlert("이미 있는 아이디예요!", "🚫");
+                }
+
+                const newUser = {
+                    id: loginId,
+                    pw: loginPw,
+                    name: signupName,
+                    no: signupNo,
+                    role: loginId === 'admin' ? 'admin' : 'student',
+                    createdAt: Date.now()
+                };
+
+                await setDoc(userRef, newUser);
+                setAppUser(newUser);
+                localStorage.setItem('opo_login_id', loginId);
+                showAlert(`${signupName} 작가님, 환영해요!`, "🎈");
+            };
+
+            // 로그인
+            const handleLogin = async () => {
+                if (!loginId || !loginPw) return showAlert("아이디와 비밀번호를 써주세요!", "👀");
+                
+                const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', loginId);
+                const userSnap = await getDoc(userRef);
+                
+                if (userSnap.exists()) {
+                    const userData = userSnap.data();
+                    if (userData.pw === loginPw) {
+                        setAppUser(userData);
+                        localStorage.setItem('opo_login_id', loginId);
+                        showAlert(`${userData.name} 작가님 반가워요!`, "🎈");
+                    } else {
+                        showAlert("비밀번호가 틀렸어요!", "🔒");
+                    }
+                } else {
+                    showAlert("가입되지 않은 아이디예요!", "❓");
+                }
+            };
+
+            const logout = () => {
+                setAppUser(null);
+                localStorage.removeItem('opo_login_id');
+                setLoginId("");
+                setLoginPw("");
+                setSignupName("");
+                setSignupNo("");
+                setIsLoginView(true);
+            };
+
             const savePost = async (type) => {
-                if (!user) return;
+                if (!appUser) return;
                 const content = document.getElementById(type === 'book' ? 'book-content' : 'life-content').value;
                 if (!content) return showAlert('내용을 적어주세요!', '✍️');
 
                 const newPost = {
                     type,
-                    writer: userName,
-                    writerNo: userNo,
-                    writerUid: user.uid,
+                    writer: appUser.name,
+                    writerNo: appUser.no,
+                    writerId: appUser.id,
                     content,
                     timestamp: Date.now(),
                     likes: [],
@@ -176,26 +267,22 @@
                     newPost.imageUrl = selectedLifeImg;
                 }
 
-                try {
-                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'posts'), newPost);
-                    setActiveTab('feed');
-                    showAlert('저장되었습니다!', '✨');
-                    if(type === 'book') {
-                        document.getElementById('book-title').value = '';
-                        document.getElementById('book-content').value = '';
-                        document.getElementById('book-author').value = '';
-                    } else {
-                        document.getElementById('life-content').value = '';
-                        setSelectedLifeImg(null);
-                    }
-                } catch (e) {
-                    showAlert('저장에 실패했어요.', '❌');
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'posts'), newPost);
+                setActiveTab('feed');
+                showAlert('저장되었습니다!', '✨');
+                if(type === 'book') {
+                    document.getElementById('book-title').value = '';
+                    document.getElementById('book-content').value = '';
+                    document.getElementById('book-author').value = '';
+                } else {
+                    document.getElementById('life-content').value = '';
+                    setSelectedLifeImg(null);
                 }
             };
 
             const toggleLike = async (postId) => {
                 const post = posts.find(p => p.id === postId);
-                const userKey = `${userNo}_${userName}`;
+                const userKey = `${appUser.no}_${appUser.name}`;
                 const postRef = doc(db, 'artifacts', appId, 'public', 'data', 'posts', postId);
                 if (post.likes.includes(userKey)) await updateDoc(postRef, { likes: arrayRemove(userKey) });
                 else await updateDoc(postRef, { likes: arrayUnion(userKey) });
@@ -206,7 +293,7 @@
                 const postRef = doc(db, 'artifacts', appId, 'public', 'data', 'posts', showComments.id);
                 await updateDoc(postRef, {
                     comments: arrayUnion({
-                        writer: userName,
+                        writer: appUser.name,
                         content: commentInput,
                         date: new Date().toISOString(),
                         timestamp: Date.now()
@@ -218,9 +305,22 @@
             const sendSecret = async () => {
                 const content = document.getElementById('secret-content').value;
                 if (!content) return;
-                await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'secrets'), {
-                    writer: userName, writerNo: userNo, content, timestamp: Date.now(), date: new Date().toLocaleString()
-                });
+                
+                const secretData = {
+                    id: appUser.id,
+                    writer: appUser.name,
+                    writerNo: appUser.no,
+                    content,
+                    timestamp: Date.now(),
+                    date: new Date().toLocaleString()
+                };
+
+                // 내 전용 컬렉션에 저장
+                await addDoc(collection(db, 'artifacts', appId, 'users', appUser.id, 'secrets'), secretData);
+                
+                // 관리자용 공용 수신함에도 사본 저장
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'all_secrets'), secretData);
+
                 document.getElementById('secret-content').value = '';
                 showAlert('선생님께 전달되었습니다!', '💌');
             };
@@ -239,7 +339,7 @@
                 const lastDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
                 const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).getDay();
                 const myHistory = {};
-                posts.filter(p => p.writerNo === userNo && p.type === 'book').forEach(p => {
+                posts.filter(p => p.writerId === appUser.id && p.type === 'book').forEach(p => {
                     const d = new Date(p.timestamp).getDate();
                     myHistory[d] = (myHistory[d] || 0) + 1;
                 });
@@ -260,17 +360,64 @@
                 return days;
             };
 
-            if (!user || !userName) {
+            // 로그인/회원가입 화면
+            if (!appUser) {
                 return (
-                    <div className="fixed inset-0 bg-indigo-600 flex items-center justify-center p-6 text-white font-sans">
-                        <div className="text-center w-full max-w-sm animate-pop">
-                            <div className="bg-white/10 backdrop-blur-xl p-10 rounded-[3.5rem] border border-white/20 shadow-2xl">
+                    <div className="fixed inset-0 bg-indigo-600 flex items-center justify-center p-6 text-white font-sans overflow-y-auto">
+                        <div className="text-center w-full max-w-sm py-10">
+                            <div className="bg-white/10 backdrop-blur-xl p-8 rounded-[3.5rem] border border-white/20 shadow-2xl animate-pop">
                                 <h1 className="text-4xl font-bold font-gaegu mb-2 text-yellow-300">오포초등학교</h1>
                                 <h2 className="text-xl font-bold font-gaegu mb-8 text-indigo-100 italic">디지털 북로드 V5</h2>
+                                
                                 <div className="space-y-4 text-gray-800">
-                                    <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="이름을 입력하세요" className="w-full p-4 rounded-2xl outline-none shadow-inner text-center font-bold" />
-                                    <input type="number" value={userNo} onChange={(e) => setUserNo(e.target.value)} placeholder="번호 입력" className="w-full p-4 rounded-2xl outline-none shadow-inner text-center font-bold" />
-                                    <button onClick={handleLogin} className="w-full bg-yellow-400 text-indigo-900 font-bold p-4 rounded-2xl text-xl active:scale-95 transition shadow-lg">입장하기! 🎒</button>
+                                    <input 
+                                        type="text" 
+                                        value={loginId} 
+                                        onChange={(e) => setLoginId(e.target.value)} 
+                                        onKeyDown={(e) => e.key === 'Enter' && (isLoginView ? handleLogin() : null)}
+                                        placeholder="아이디" 
+                                        className="w-full p-4 rounded-2xl outline-none shadow-inner text-center font-bold" 
+                                    />
+                                    <input 
+                                        type="password" 
+                                        value={loginPw} 
+                                        onChange={(e) => setLoginPw(e.target.value)} 
+                                        onKeyDown={(e) => e.key === 'Enter' && (isLoginView ? handleLogin() : null)}
+                                        placeholder="비밀번호" 
+                                        className="w-full p-4 rounded-2xl outline-none shadow-inner text-center font-bold" 
+                                    />
+                                    {!isLoginView && (
+                                        <>
+                                            <input 
+                                                type="text" 
+                                                value={signupName} 
+                                                onChange={(e) => setSignupName(e.target.value)} 
+                                                onKeyDown={(e) => e.key === 'Enter' && handleSignup()}
+                                                placeholder="이름 (예: 홍길동)" 
+                                                className="w-full p-4 rounded-2xl outline-none shadow-inner text-center font-bold" 
+                                            />
+                                            <input 
+                                                type="number" 
+                                                value={signupNo} 
+                                                onChange={(e) => setSignupNo(e.target.value)} 
+                                                onKeyDown={(e) => e.key === 'Enter' && handleSignup()}
+                                                placeholder="출석 번호" 
+                                                className="w-full p-4 rounded-2xl outline-none shadow-inner text-center font-bold" 
+                                            />
+                                        </>
+                                    )}
+                                    <button 
+                                        onClick={isLoginView ? handleLogin : handleSignup} 
+                                        className="w-full bg-yellow-400 text-indigo-900 font-bold p-4 rounded-2xl text-xl active:scale-95 transition shadow-lg"
+                                    >
+                                        {isLoginView ? "작가 로그인 🎒" : "작가 등록하기 ✨"}
+                                    </button>
+                                    <button 
+                                        onClick={() => setIsLoginView(!isLoginView)}
+                                        className="text-white/60 text-sm font-bold underline mt-4"
+                                    >
+                                        {isLoginView ? "처음 왔어요 (회원가입)" : "아이디가 있어요 (로그인)"}
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -279,24 +426,29 @@
             }
 
             return (
-                <div className="max-w-xl mx-auto p-4 font-sans pb-32 min-h-screen">
+                <div className="max-w-xl mx-auto p-4 font-sans pb-40 min-h-screen">
                     <header className="flex justify-between items-center mb-6 pt-4 px-2">
                         <div className="flex items-center gap-4">
                             <div className="w-14 h-14 rounded-2xl bg-white shadow-lg flex items-center justify-center text-indigo-200 text-2xl rotate-3"><i className="fa-solid fa-user"></i></div>
                             <div>
-                                <h2 className="text-2xl font-bold text-slate-800 font-gaegu leading-none mb-1"><span className="text-indigo-600">{userName}</span> 작가님</h2>
-                                <div className="flex items-center gap-2"><span className="bg-indigo-500 text-white text-[9px] px-2 py-0.5 rounded-full font-bold">LV.1 새싹</span><span className="text-[10px] text-slate-400 font-bold tracking-widest">{userNo}번</span></div>
+                                <h2 className="text-2xl font-bold text-slate-800 font-gaegu leading-none mb-1"><span className="text-indigo-600">{appUser.name}</span> 작가님</h2>
+                                <div className="flex items-center gap-2">
+                                    <span className={`text-white text-[9px] px-2 py-0.5 rounded-full font-bold ${appUser.role === 'admin' ? 'bg-red-500' : 'bg-indigo-500'}`}>
+                                        {appUser.role === 'admin' ? '교사 관리자' : 'LV.1 새싹'}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 font-bold tracking-widest">{appUser.no}번</span>
+                                </div>
                             </div>
                         </div>
+                        <button onClick={logout} className="text-slate-400 text-xs hover:text-red-500 transition-colors">로그아웃</button>
                     </header>
 
-                    <div className="min-h-[70vh]">
+                    <div className="min-h-[60vh]">
                         {activeTab === 'feed' && (
                             <div className="space-y-6 animate-pop">
                                 <h3 className="font-bold text-slate-800 text-xl font-gaegu ml-2">우리 반 타임라인 💬</h3>
                                 {posts.length === 0 ? <div className="text-center py-20 text-slate-300 italic font-gaegu text-xl">아직 첫 글이 없어요.</div> : posts.map(post => {
-                                    const userKey = `${userNo}_${userName}`;
-                                    const isLiked = post.likes.includes(userKey);
+                                    const isLiked = post.likes.includes(`${appUser.no}_${appUser.name}`);
                                     return (
                                         <div key={post.id} className="bg-white rounded-[2rem] p-6 shadow-sm border-4 border-white mb-4">
                                             <div className="flex justify-between items-center mb-4">
@@ -305,7 +457,7 @@
                                                     <div><h5 className="font-bold text-slate-800 font-gaegu text-lg leading-tight">{post.writer}</h5><p className="text-[9px] text-slate-300 font-bold">{post.writerNo}번 작가</p></div>
                                                 </div>
                                                 <span className="text-[9px] font-bold bg-indigo-50 text-indigo-400 px-2 py-1 rounded-lg uppercase italic">
-                                                    {post.type === 'book' ? KDC_LABELS[post.category] : 'DAILY'}
+                                                    {post.type === 'book' ? KDC_LABELS[post.category]?.split(' ')[0] : 'DAILY'}
                                                 </span>
                                             </div>
                                             {post.imageUrl && <img src={post.imageUrl} className="w-full rounded-2xl mb-4 border-2 border-slate-50 shadow-sm" alt="Post" />}
@@ -327,10 +479,10 @@
 
                         {activeTab === 'write-book' && (
                             <div className="bg-white rounded-[2rem] p-8 shadow-lg border-4 border-white animate-pop">
-                                <h3 className="text-3xl font-bold mb-6 text-slate-800 font-gaegu text-center underline decoration-indigo-100">📖 독서 기록장</h3>
+                                <h3 className="text-3xl font-bold mb-6 text-slate-800 font-gaegu text-center underline decoration-indigo-100">📖 독서기록장</h3>
                                 <div className="space-y-4">
                                     <select id="book-category" className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-indigo-600 outline-none border-2 border-transparent focus:border-indigo-400">
-                                        {Object.entries(KDC_LABELS).map(([k,v]) => <option key={k} value={k}>{k} {v}</option>)}
+                                        {Object.entries(KDC_LABELS).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
                                     </select>
                                     <input id="book-title" placeholder="책 제목을 적어주세요" className="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-400 shadow-inner" />
                                     <input id="book-author" placeholder="저자(지은이)" className="w-full p-4 bg-slate-50 rounded-2xl outline-none" />
@@ -355,11 +507,30 @@
                         {activeTab === 'secret' && (
                             <div className="bg-pink-50 p-8 rounded-[2rem] border-4 border-white shadow-md animate-pop">
                                 <h3 className="text-3xl font-bold mb-4 text-slate-800 font-gaegu text-center text-pink-500 italic">📮 마음 우체통</h3>
-                                <div className="space-y-4 mb-6 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
-                                    {secrets.length === 0 ? <div className="text-center py-10 text-pink-200 italic font-gaegu text-xl">첫 편지를 기다리고 있어요!</div> : secrets.map(s => <div key={s.id} className="flex justify-end mb-2"><div className="bg-pink-500 text-white p-4 rounded-2xl rounded-tr-none text-sm shadow-md leading-relaxed">{s.content}<p className="text-[8px] opacity-60 mt-2 text-right font-bold uppercase tracking-widest">{s.date}</p></div></div>)}
-                                </div>
-                                <textarea id="secret-content" placeholder="선생님께 드릴 말씀이 있어요..." className="w-full p-4 bg-white rounded-2xl h-32 outline-none border-2 border-pink-200 text-sm shadow-inner"></textarea>
-                                <button onClick={sendSecret} className="w-full bg-pink-500 text-white font-bold p-4 rounded-2xl mt-4 active:scale-95 transition shadow-lg">보내기 💌</button>
+                                
+                                {appUser.role === 'admin' ? (
+                                    <div className="space-y-4 mb-6 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
+                                        <h4 className="text-sm font-bold text-slate-400 text-center mb-4">전체 학생 메시지 수신함</h4>
+                                        {allSecrets.length === 0 ? <div className="text-center py-10 text-pink-200 italic">도착한 메시지가 없어요.</div> : allSecrets.map(s => (
+                                            <div key={s.id} className="bg-white p-4 rounded-2xl border-2 border-pink-100 shadow-sm">
+                                                <div className="flex justify-between mb-1">
+                                                    <span className="text-[10px] font-bold text-pink-500">{s.writerNo}번 {s.writer}</span>
+                                                    <span className="text-[8px] text-slate-300">{s.date}</span>
+                                                </div>
+                                                <p className="text-sm text-slate-700">{s.content}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <>
+                                        <p className="text-center text-pink-300 text-[11px] font-bold uppercase mb-6 tracking-widest leading-relaxed">선생님만 읽을 수 있는 비밀 편지예요.<br />고민이나 나누고 싶은 말을 적어주세요.</p>
+                                        <div className="space-y-4 mb-6 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                                            {secrets.length === 0 ? <div className="text-center py-10 text-pink-200 italic font-gaegu text-xl">첫 편지를 기다리고 있어요!</div> : secrets.map(s => <div key={s.id} className="flex justify-end mb-2"><div className="bg-pink-500 text-white p-4 rounded-2xl rounded-tr-none text-sm shadow-md leading-relaxed">{s.content}<p className="text-[8px] opacity-60 mt-2 text-right font-bold uppercase tracking-widest">{s.date}</p></div></div>)}
+                                        </div>
+                                        <textarea id="secret-content" placeholder="선생님께 드릴 말씀이 있어요..." className="w-full p-4 bg-white rounded-2xl h-32 outline-none border-2 border-pink-200 text-sm shadow-inner"></textarea>
+                                        <button onClick={sendSecret} className="w-full bg-pink-500 text-white font-bold p-4 rounded-2xl mt-4 active:scale-95 transition shadow-lg">보내기 💌</button>
+                                    </>
+                                )}
                             </div>
                         )}
 
@@ -371,18 +542,29 @@
                                     <div className="grid grid-cols-7 gap-1">{renderCalendar()}</div>
                                     <div className="mt-6 p-4 bg-indigo-50 rounded-2xl flex justify-between items-center">
                                         <span className="text-xs font-bold text-indigo-500">누적 독서량</span>
-                                        <span className="text-2xl font-bold text-indigo-600 font-gaegu">{posts.filter(p => p.writerNo === userNo && p.type === 'book').length} 권</span>
+                                        <span className="text-2xl font-bold text-indigo-600 font-gaegu">{posts.filter(p => p.writerId === appUser.id && p.type === 'book').length} 권</span>
                                     </div>
                                 </div>
-                                <button onClick={() => { localStorage.clear(); location.reload(); }} className="w-full text-slate-300 underline text-[10px] font-bold py-10">LOGOUT / SYSTEM RESET</button>
                             </div>
                         )}
                     </div>
 
-                    <nav className="fixed bottom-4 left-4 right-4 bg-white/90 backdrop-blur-md border-2 border-white shadow-2xl rounded-[2.5rem] px-6 py-4 flex justify-between items-end z-[4000]">
-                        {[ ['feed', 'house-chimney', '홈'], ['write-book', 'book-open-reader', '기록'], ['write-life', 'pen-fancy', '조각'], ['secret', 'envelope-heart', '우체통'], ['admin', 'star-of-life', '관리'] ].map(([tab, icon, label]) => (
-                            <button key={tab} onClick={() => setActiveTab(tab)} className={`flex flex-col items-center gap-1 transition-all flex-1 ${activeTab === tab ? 'text-indigo-600 scale-110 -translate-y-2' : 'text-slate-300'}`}><i className={`fa-solid fa-${icon} text-xl`}></i><span className="text-[8px] font-bold">{label}</span></button>
-                        ))}
+                    <nav className="fixed bottom-0 left-0 right-0 bg-white shadow-[0_-10px_30px_rgba(0,0,0,0.1)] rounded-t-[2.5rem] px-4 py-4 flex justify-between items-end z-[4000] border-t-4 border-white">
+                        <button onClick={() => setActiveTab('feed')} className={`flex flex-col items-center gap-1 transition-all flex-1 ${activeTab === 'feed' ? 'nav-item active' : 'text-slate-300'}`}>
+                            <i className="fa-solid fa-house-chimney text-2xl"></i><span className="text-[10px] mt-1">홈</span>
+                        </button>
+                        <button onClick={() => setActiveTab('write-book')} className={`flex flex-col items-center gap-1 transition-all flex-1 ${activeTab === 'write-book' ? 'nav-item active' : 'text-slate-300'}`}>
+                            <i className="fa-solid fa-book-open-reader text-2xl"></i><span className="text-[10px] mt-1">독서기록</span>
+                        </button>
+                        <button onClick={() => setActiveTab('write-life')} className={`flex flex-col items-center gap-1 transition-all flex-1 ${activeTab === 'write-life' ? 'nav-item active' : 'text-slate-300'}`}>
+                            <i className="fa-solid fa-pen-fancy text-2xl"></i><span className="text-[10px] mt-1">조각</span>
+                        </button>
+                        <button onClick={() => setActiveTab('secret')} className={`flex flex-col items-center gap-1 transition-all flex-1 ${activeTab === 'secret' ? 'nav-item active' : 'text-slate-300'}`}>
+                            <i className="fa-solid fa-envelope-heart text-2xl"></i><span className="text-[10px] mt-1">우체통</span>
+                        </button>
+                        <button onClick={() => setActiveTab('admin')} className={`flex flex-col items-center gap-1 transition-all flex-1 ${activeTab === 'admin' ? 'nav-item active' : 'text-slate-300'}`}>
+                            <i className="fa-solid fa-star-of-life text-2xl"></i><span className="text-[10px] mt-1">관리</span>
+                        </button>
                     </nav>
 
                     {showComments && (
@@ -395,7 +577,7 @@
                                     ))}
                                 </div>
                                 <div className="absolute bottom-0 left-0 right-0 p-6 bg-white border-t flex gap-2 rounded-t-[2rem]">
-                                    <input value={commentInput} onChange={(e) => setCommentInput(e.target.value)} placeholder="응원의 한마디" className="flex-1 p-4 bg-slate-50 rounded-2xl outline-none font-medium" />
+                                    <input value={commentInput} onChange={(e) => setCommentInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addComment()} placeholder="응원의 한마디" className="flex-1 p-4 bg-slate-50 rounded-2xl outline-none font-medium" />
                                     <button onClick={addComment} className="bg-indigo-600 text-white px-8 rounded-2xl font-bold">보내기</button>
                                 </div>
                                 <button onClick={() => setShowComments(null)} className="absolute top-8 right-8 text-slate-300 text-3xl">×</button>
