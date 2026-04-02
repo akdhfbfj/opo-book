@@ -3,16 +3,18 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, addDoc, onSnapshot, query, doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 
-// ---------------------------------------------------------
-// [필독] 여기 { } 안에 Firebase 콘솔에서 복사한 설정을 붙여넣으세요!
-// ---------------------------------------------------------
+/**
+ * [STEP 1] Firebase 설정
+ * 사용자가 제공한 SDK 설정을 그대로 반영했습니다.
+ */
 const firebaseConfig = {
-  apiKey: "여러분의_API_키",
-  authDomain: "여러분의_프로젝트.firebaseapp.com",
-  projectId: "여러분의_프로젝트_ID",
-  storageBucket: "여러분의_프로젝트.appspot.com",
-  messagingSenderId: "여러분의_송신자_ID",
-  appId: "여러분의_앱_ID"
+  apiKey: "AIzaSyDOEDyzO5kYY-OCmqJZrUU1rfenP8Kz8tM",
+  authDomain: "opoproject-c291b.firebaseapp.com",
+  projectId: "opoproject-c291b",
+  storageBucket: "opoproject-c291b.firebasestorage.app",
+  messagingSenderId: "792551343830",
+  appId: "1:792551343830:web:b3e10df0bf4b92c4c4eb77",
+  measurementId: "G-K1TD0BB954"
 };
 
 // Firebase 초기화
@@ -20,15 +22,17 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// 앱 식별 아이디 (Firebase 경로용)
+// 앱 식별 아이디 (우리 반 데이터가 저장될 폴더 이름이라고 생각하면 쉬워요!)
 const appId = "opo-digital-bookroad-v5";
 
+// KDC 한국십진분류법 (도서관에서 책을 나누는 기준이에요)
 const KDC_LABELS = {
     "000": "총류", "100": "철학", "200": "종교", "300": "사회과학", "400": "자연과학",
     "500": "기술과학", "600": "예술", "700": "언어", "800": "문학", "900": "역사"
 };
 
 export default function App() {
+  // [상태 관리] 앱에서 변하는 데이터들을 저장하는 상자들입니다.
   const [user, setUser] = useState(null);
   const [userName, setUserName] = useState("");
   const [userNo, setUserNo] = useState("");
@@ -40,9 +44,13 @@ export default function App() {
   const [commentInput, setCommentInput] = useState("");
   const [selectedLifeImg, setSelectedLifeImg] = useState(null);
 
-  // 1. Firebase 인증 (익명 로그인)
+  /**
+   * [STEP 2] 로그인 처리
+   * 앱이 켜지면 자동으로 Firebase에 '익명'으로 연결합니다.
+   * 로컬 스토리지에 저장된 이름과 번호를 가져옵니다.
+   */
   useEffect(() => {
-    signInAnonymously(auth).catch(err => console.error("로그인 실패:", err));
+    signInAnonymously(auth).catch(err => console.error("Firebase 연결 실패:", err));
     
     const unsubscribe = onAuthStateChanged(auth, (userData) => {
       if (userData) {
@@ -58,18 +66,22 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. 데이터 실시간 감시 (Firestore)
+  /**
+   * [STEP 3] 데이터 실시간 감시
+   * 데이터베이스(Firestore)에 새 글이 올라오면 화면을 자동으로 새로고침합니다.
+   */
   useEffect(() => {
     if (!user) return;
 
-    // 공용 피드
+    // 1. 우리 반 전체가 보는 게시판 경로
     const postsPath = `artifacts/${appId}/public/data/posts`;
     const unsubPosts = onSnapshot(collection(db, postsPath), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // 최신글이 위로 오도록 정렬
       setPosts(data.sort((a, b) => b.timestamp - a.timestamp));
     });
 
-    // 비밀 우체통 (본인 것만)
+    // 2. 나만 보는 비밀 우체통 경로
     const secretsPath = `artifacts/${appId}/users/${user.uid}/secrets`;
     const unsubSecrets = onSnapshot(collection(db, secretsPath), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -79,6 +91,7 @@ export default function App() {
     return () => { unsubPosts(); unsubSecrets(); };
   }, [user]);
 
+  // 로그인 확인 버튼 클릭 시
   const handleLogin = () => {
     if (!userName || !userNo) return showAlert('이름과 번호를 써주세요!', '👀');
     localStorage.setItem('opo_user_v5_info', JSON.stringify({ name: userName, no: userNo }));
@@ -88,6 +101,10 @@ export default function App() {
   const showAlert = (msg, icon) => setAlert({ show: true, msg, icon: icon || '🌟' });
   const closeAlert = () => setAlert({ ...alert, show: false });
 
+  /**
+   * [STEP 4] 글 저장하기 기능
+   * 독서 기록 또는 오늘의 조각을 데이터베이스에 저장합니다.
+   */
   const savePost = async (type) => {
     if (!user) return;
     const content = document.getElementById(type === 'book' ? 'book-content' : 'life-content').value;
@@ -110,19 +127,24 @@ export default function App() {
       newPost.author = document.getElementById('book-author').value || '작자미상';
       newPost.category = document.getElementById('book-category').value;
     } else if (selectedLifeImg) {
-      newPost.imageUrl = selectedLifeImg;
+      newPost.imageUrl = selectedLifeImg; // 사진이 있다면 사진도 함께 저장
     }
 
-    await addDoc(collection(db, `artifacts/${appId}/public/data/posts`), newPost);
-    setActiveTab('feed');
-    showAlert('저장되었습니다!', '✨');
-    // 필드 초기화
-    if(type === 'book') {
-        document.getElementById('book-title').value = '';
-        document.getElementById('book-content').value = '';
-    } else {
-        document.getElementById('life-content').value = '';
-        setSelectedLifeImg(null);
+    try {
+        await addDoc(collection(db, `artifacts/${appId}/public/data/posts`), newPost);
+        setActiveTab('feed');
+        showAlert('소중한 기록이 저장되었습니다!', '✨');
+        
+        // 입력창 비우기
+        if(type === 'book') {
+            document.getElementById('book-title').value = '';
+            document.getElementById('book-content').value = '';
+        } else {
+            document.getElementById('life-content').value = '';
+            setSelectedLifeImg(null);
+        }
+    } catch (e) {
+        showAlert('저장에 실패했어요. 인터넷을 확인해주세요.', '❌');
     }
   };
 
@@ -167,13 +189,15 @@ export default function App() {
     }
   };
 
-  // 달력 렌더링용 데이터 계산
+  /**
+   * [STEP 5] 달력 스티커 렌더링
+   * 내가 책을 읽은 날짜를 찾아 스티커를 붙여줍니다.
+   */
   const renderCalendar = () => {
     const now = new Date();
     const lastDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).getDay();
     
-    // 내 독서 기록 날짜별 집계
     const myHistory = {};
     posts.filter(p => p.writerNo === userNo && p.type === 'book').forEach(p => {
         const d = new Date(p.timestamp).getDate();
@@ -185,7 +209,7 @@ export default function App() {
     for(let i=1; i<=lastDate; i++) {
         const count = myHistory[i] || 0;
         days.push(
-            <div key={i} className={`relative p-1 h-14 border rounded-xl flex flex-col items-center ${i === now.getDate() ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-transparent'}`}>
+            <div key={i} className={`relative p-1 h-14 border rounded-xl flex flex-col items-center ${i === now.getDate() ? 'bg-indigo-50 border-indigo-300' : 'bg-slate-50 border-transparent'}`}>
                 <span className="text-[10px] font-bold text-slate-400">{i}</span>
                 <div className="flex flex-wrap justify-center gap-0.5 mt-1">
                     {count > 0 && (count <= 3 ? [...Array(count)].map((_,idx) => <i key={idx} className="fa-solid fa-book text-[8px] text-indigo-400"></i>) : <><i className="fa-solid fa-book text-[8px] text-indigo-400"></i><span className="text-[8px] font-bold text-indigo-600">3+</span></>)}
@@ -196,6 +220,7 @@ export default function App() {
     return days;
   };
 
+  // 로그인 화면 (이름이 없을 때만 보임)
   if (!user || !userName) {
     return (
       <div className="fixed inset-0 bg-indigo-600 flex items-center justify-center p-6 text-white font-sans">
@@ -204,9 +229,9 @@ export default function App() {
                 <h1 className="text-4xl font-bold font-gaegu mb-2 text-yellow-300">오포초등학교</h1>
                 <h2 className="text-xl font-bold font-gaegu mb-8 text-indigo-100 italic">디지털 북로드 V5</h2>
                 <div className="space-y-4 text-gray-800">
-                    <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="이름" className="w-full p-4 rounded-2xl outline-none" />
-                    <input type="number" value={userNo} onChange={(e) => setUserNo(e.target.value)} placeholder="출석 번호" className="w-full p-4 rounded-2xl outline-none" />
-                    <button onClick={handleLogin} className="w-full bg-yellow-400 text-indigo-900 font-bold p-4 rounded-2xl text-xl active:scale-95 transition">입장하기! 🎒</button>
+                    <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="이름을 입력하세요" className="w-full p-4 rounded-2xl outline-none shadow-inner" />
+                    <input type="number" value={userNo} onChange={(e) => setUserNo(e.target.value)} placeholder="번호 입력" className="w-full p-4 rounded-2xl outline-none shadow-inner" />
+                    <button onClick={handleLogin} className="w-full bg-yellow-400 text-indigo-900 font-bold p-4 rounded-2xl text-xl active:scale-95 transition shadow-lg">입장하기! 🎒</button>
                 </div>
             </div>
         </div>
@@ -216,7 +241,7 @@ export default function App() {
 
   return (
     <div className="max-w-xl mx-auto p-4 font-sans pb-32 min-h-screen bg-slate-50">
-      {/* 헤더 */}
+      {/* 상단 헤더 */}
       <header className="flex justify-between items-center mb-6 pt-4 px-2">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl bg-white shadow-lg flex items-center justify-center text-indigo-200 text-2xl rotate-3"><i className="fa-solid fa-user"></i></div>
@@ -227,25 +252,25 @@ export default function App() {
         </div>
       </header>
 
-      {/* 탭 메뉴 */}
+      {/* 메인 화면 탭 전환 */}
       <div className="min-h-[70vh]">
         {activeTab === 'feed' && (
           <div className="space-y-6">
             <h3 className="font-bold text-slate-800 text-xl font-gaegu ml-2">우리 반 타임라인 💬</h3>
-            {posts.length === 0 ? <div className="text-center py-20 text-slate-300 italic">아직 기록이 없어요...</div> : posts.map(post => (
-              <div key={post.id} className="bg-white rounded-[2rem] p-6 shadow-sm border-4 border-white">
+            {posts.length === 0 ? <div className="text-center py-20 text-slate-300 italic font-gaegu">아직 우리 반에 소식이 없어요.</div> : posts.map(post => (
+              <div key={post.id} className="bg-white rounded-[2rem] p-6 shadow-sm border-4 border-white transition-all hover:shadow-md">
                 <div className="flex justify-between items-center mb-4">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-200"><i className="fa-solid fa-user"></i></div>
                     <div><h5 className="font-bold text-slate-800 font-gaegu text-lg">{post.writer}</h5><p className="text-[9px] text-slate-300 font-bold">{post.writerNo}번</p></div>
                   </div>
-                  <span className="text-[9px] font-bold bg-indigo-50 text-indigo-400 px-2 py-1 rounded-lg uppercase">{post.type === 'book' ? KDC_LABELS[post.category] : 'Life'}</span>
+                  <span className="text-[9px] font-bold bg-indigo-50 text-indigo-400 px-2 py-1 rounded-lg uppercase italic">{post.type === 'book' ? KDC_LABELS[post.category] : 'Life Piece'}</span>
                 </div>
-                {post.imageUrl && <img src={post.imageUrl} className="w-full rounded-2xl mb-4 border" alt="post" />}
-                {post.type === 'book' && <div className="bg-indigo-50/50 p-4 rounded-2xl mb-4 border-l-4 border-indigo-400"><h4 className="font-bold text-slate-800 font-gaegu">📖 {post.title}</h4><p className="text-[10px] text-indigo-400">{post.author}</p></div>}
+                {post.imageUrl && <img src={post.imageUrl} className="w-full rounded-2xl mb-4 border-2 border-white shadow-sm" alt="post" />}
+                {post.type === 'book' && <div className="bg-indigo-50/50 p-4 rounded-2xl mb-4 border-l-4 border-indigo-400 shadow-inner"><h4 className="font-bold text-slate-800 font-gaegu">📖 {post.title}</h4><p className="text-[10px] text-indigo-400">{post.author}</p></div>}
                 <div className="text-sm text-slate-600 leading-relaxed mb-5 whitespace-pre-wrap">{post.content}</div>
                 <div className="flex items-center gap-3 pt-4 border-t border-slate-50">
-                  <button onClick={() => toggleLike(post.id)} className={`px-4 py-2 rounded-full border transition-all ${post.likes.includes(`${userNo}_${userName}`) ? 'text-pink-500 bg-pink-50 border-pink-100' : 'text-slate-400 bg-slate-50 border-transparent'}`}><i className={`fa-${post.likes.includes(`${userNo}_${userName}`) ? 'solid' : 'regular'} fa-heart mr-1`}></i>{post.likes.length}</button>
+                  <button onClick={() => toggleLike(post.id)} className={`px-4 py-2 rounded-full border transition-all active:scale-125 ${post.likes.includes(`${userNo}_${userName}`) ? 'text-pink-500 bg-pink-50 border-pink-100' : 'text-slate-400 bg-slate-50 border-transparent'}`}><i className={`fa-${post.likes.includes(`${userNo}_${userName}`) ? 'solid' : 'regular'} fa-heart mr-1`}></i>{post.likes.length}</button>
                   <button onClick={() => setShowComments(post)} className="px-4 py-2 rounded-full bg-slate-50 text-slate-400"><i className="fa-regular fa-comment mr-1"></i>{post.comments.length}</button>
                 </div>
               </div>
@@ -258,10 +283,10 @@ export default function App() {
             <h3 className="text-3xl font-bold mb-6 text-slate-800 font-gaegu text-center underline decoration-indigo-200">📖 독서 기록장</h3>
             <div className="space-y-4">
               <select id="book-category" className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-indigo-600 outline-none">{Object.entries(KDC_LABELS).map(([k,v]) => <option key={k} value={k}>{k} {v}</option>)}</select>
-              <input id="book-title" placeholder="책 제목" className="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none focus:ring-2 ring-indigo-200" />
-              <input id="book-author" placeholder="지은이" className="w-full p-4 bg-slate-50 rounded-2xl outline-none" />
-              <textarea id="book-content" placeholder="이 책을 읽고 어떤 마음이 들었나요?" className="w-full p-4 bg-slate-50 rounded-2xl h-48 outline-none resize-none"></textarea>
-              <button onClick={() => savePost('book')} className="w-full bg-indigo-600 text-white font-bold p-5 rounded-3xl text-xl shadow-lg active:scale-95 transition">공유하기 🚀</button>
+              <input id="book-title" placeholder="책 제목을 적어주세요" className="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none focus:ring-2 ring-indigo-200" />
+              <input id="book-author" placeholder="저자(지은이)" className="w-full p-4 bg-slate-50 rounded-2xl outline-none" />
+              <textarea id="book-content" placeholder="이 책을 읽고 내 생각이 어떻게 자라났나요?" className="w-full p-4 bg-slate-50 rounded-2xl h-48 outline-none resize-none leading-relaxed"></textarea>
+              <button onClick={() => savePost('book')} className="w-full bg-indigo-600 text-white font-bold p-5 rounded-3xl text-xl shadow-lg active:scale-95 transition">우리 반에 공유하기 🚀</button>
             </div>
           </div>
         )}
@@ -269,12 +294,12 @@ export default function App() {
         {activeTab === 'write-life' && (
           <div className="bg-white rounded-[2rem] p-8 shadow-sm border-4 border-white">
             <h3 className="text-3xl font-bold mb-6 text-slate-800 font-gaegu text-center underline decoration-emerald-200">✨ 오늘의 조각</h3>
-            <div className="mb-4">
-                {selectedLifeImg && <div className="relative mb-4"><img src={selectedLifeImg} className="w-full rounded-2xl border" alt="preview" /><button onClick={() => setSelectedLifeImg(null)} className="absolute top-2 right-2 bg-black/50 text-white w-8 h-8 rounded-full">×</button></div>}
-                <label className="flex items-center justify-center gap-2 w-full p-4 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 cursor-pointer text-slate-400 font-bold"><i className="fa-solid fa-camera"></i> 사진 추가하기(선택)<input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} /></label>
+            <div className="mb-4 text-center">
+                {selectedLifeImg && <div className="relative mb-4"><img src={selectedLifeImg} className="w-full rounded-2xl border shadow-md" alt="preview" /><button onClick={() => setSelectedLifeImg(null)} className="absolute top-2 right-2 bg-black/50 text-white w-8 h-8 rounded-full">×</button></div>}
+                <label className="flex items-center justify-center gap-2 w-full p-6 bg-slate-50 rounded-2xl border-4 border-dashed border-slate-100 cursor-pointer text-slate-400 font-bold hover:bg-slate-100 transition"><i className="fa-solid fa-camera text-2xl"></i> 사진 올리기(선택)<input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} /></label>
             </div>
-            <textarea id="life-content" placeholder="오늘 있었던 일을 자유롭게 기록해요." className="w-full p-4 bg-slate-50 rounded-2xl h-60 outline-none resize-none"></textarea>
-            <button onClick={() => savePost('life')} className="w-full bg-emerald-500 text-white font-bold p-5 rounded-3xl text-xl shadow-lg active:scale-95 transition mt-4">보관하기 📮</button>
+            <textarea id="life-content" placeholder="오늘 있었던 재미있는 일을 자유롭게 기록해요." className="w-full p-4 bg-slate-50 rounded-2xl h-60 outline-none resize-none leading-relaxed"></textarea>
+            <button onClick={() => savePost('life')} className="w-full bg-emerald-500 text-white font-bold p-5 rounded-3xl text-xl shadow-lg active:scale-95 transition mt-4">조각 보관하기 📮</button>
           </div>
         )}
 
@@ -282,10 +307,10 @@ export default function App() {
           <div className="bg-pink-50 p-8 rounded-[2rem] border-4 border-white shadow-sm">
             <h3 className="text-3xl font-bold mb-4 text-slate-800 font-gaegu text-center text-pink-500 italic">📮 마음 우체통</h3>
             <div className="space-y-4 mb-6 max-h-64 overflow-y-auto pr-2">
-              {secrets.map(s => <div key={s.id} className="flex justify-end"><div className="bg-pink-500 text-white p-4 rounded-2xl rounded-tr-none text-sm shadow-sm">{s.content}<p className="text-[8px] opacity-60 mt-1 text-right">{s.date}</p></div></div>)}
+              {secrets.map(s => <div key={s.id} className="flex justify-end"><div className="bg-pink-500 text-white p-4 rounded-2xl rounded-tr-none text-sm shadow-md">{s.content}<p className="text-[8px] opacity-60 mt-1 text-right font-bold italic">{s.date}</p></div></div>)}
             </div>
-            <textarea id="secret-content" placeholder="선생님께 드릴 말씀이 있어요..." className="w-full p-4 bg-white rounded-2xl h-32 outline-none border-2 border-pink-200 text-sm"></textarea>
-            <button onClick={sendSecret} className="w-full bg-pink-500 text-white font-bold p-4 rounded-2xl mt-4 active:scale-95 transition shadow-md">선생님께 보내기 💌</button>
+            <textarea id="secret-content" placeholder="선생님께 드릴 말씀이 있어요..." className="w-full p-4 bg-white rounded-2xl h-32 outline-none border-2 border-pink-200 text-sm shadow-inner"></textarea>
+            <button onClick={sendSecret} className="w-full bg-pink-500 text-white font-bold p-4 rounded-2xl mt-4 active:scale-95 transition shadow-lg">선생님께 보내기 💌</button>
           </div>
         )}
 
@@ -293,46 +318,46 @@ export default function App() {
           <div className="space-y-6">
             <div className="bg-white rounded-[2rem] p-6 shadow-sm border-4 border-white">
               <h3 className="text-xl font-bold text-slate-800 font-gaegu mb-4"><i className="fa-solid fa-calendar-days text-indigo-400 mr-2"></i>나의 독서 달력</h3>
-              <div className="grid grid-cols-7 gap-2 text-center text-[10px] font-bold text-slate-300 mb-2"><div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div></div>
+              <div className="grid grid-cols-7 gap-2 text-center text-[10px] font-bold text-slate-300 mb-2 uppercase italic"><div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div></div>
               <div className="grid grid-cols-7 gap-1">{renderCalendar()}</div>
             </div>
-            <button onClick={() => { localStorage.clear(); location.reload(); }} className="w-full text-slate-300 underline text-[10px] font-bold py-10 hover:text-red-400 tracking-widest">로그아웃 / 기기 데이터 초기화</button>
+            <button onClick={() => { localStorage.clear(); location.reload(); }} className="w-full text-slate-300 underline text-[10px] font-bold py-10 hover:text-red-400 tracking-[0.3em] transition-all">LOGOUT / CLEAR DATA</button>
           </div>
         )}
       </div>
 
-      {/* 하단 내비게이션 */}
+      {/* 하단 내비게이션 (전체 탭을 보여줍니다) */}
       <nav className="fixed bottom-4 left-4 right-4 bg-white/90 backdrop-blur-md border border-white shadow-2xl rounded-[2.5rem] px-6 py-4 flex justify-between items-center z-[4000]">
         {[ ['feed', 'house-chimney', '홈'], ['write-book', 'book-open-reader', '기록'], ['write-life', 'pen-fancy', '조각'], ['secret', 'envelope-heart', '우체통'], ['admin', 'star-of-life', '관리'] ].map(([tab, icon, label]) => (
-          <button key={tab} onClick={() => setActiveTab(tab)} className={`flex flex-col items-center gap-1 transition-all ${activeTab === tab ? 'text-indigo-600 scale-110 -translate-y-1' : 'text-slate-300'}`}><i className={`fa-solid fa-${icon} text-xl`}></i><span className="text-[8px] font-bold">{label}</span></button>
+          <button key={tab} onClick={() => setActiveTab(tab)} className={`flex flex-col items-center gap-1 transition-all ${activeTab === tab ? 'text-indigo-600 scale-110 -translate-y-2' : 'text-slate-300'}`}><i className={`fa-solid fa-${icon} text-xl`}></i><span className="text-[8px] font-bold">{label}</span></button>
         ))}
       </nav>
 
-      {/* 댓글 모달 */}
+      {/* 댓글 팝업창 */}
       {showComments && (
         <div className="fixed inset-0 bg-black/60 z-[5000] flex flex-col justify-end">
           <div className="bg-white rounded-t-[3rem] p-8 w-full max-w-xl mx-auto animate-in slide-in-from-bottom duration-300">
             <h4 className="font-bold text-center mb-8 font-gaegu text-3xl text-indigo-600">따뜻한 응원 댓글 💬</h4>
             <div className="space-y-4 max-h-[40vh] overflow-y-auto mb-24 px-2">
-              {showComments.comments.length === 0 ? <p className="text-center py-10 text-slate-300 italic">첫 댓글을 달아보세요!</p> : showComments.comments.map((c, i) => (
-                <div key={i} className="bg-slate-50 p-4 rounded-2xl border-2 border-white"><p className="text-[10px] font-bold text-indigo-500 mb-1">{c.writer} 작가님</p><p className="text-sm text-slate-700">{c.content}</p></div>
+              {showComments.comments.length === 0 ? <p className="text-center py-10 text-slate-300 italic font-gaegu">첫 번째 응원 댓글을 달아주세요!</p> : showComments.comments.map((c, i) => (
+                <div key={i} className="bg-slate-50 p-4 rounded-2xl border-2 border-white shadow-sm animate-in fade-in"><p className="text-[10px] font-bold text-indigo-500 mb-1">{c.writer} 작가님</p><p className="text-sm text-slate-700 leading-relaxed font-medium">{c.content}</p></div>
               ))}
             </div>
-            <div className="absolute bottom-0 left-0 right-0 p-6 bg-white border-t flex gap-2 rounded-t-[2rem]">
+            <div className="absolute bottom-0 left-0 right-0 p-6 bg-white border-t flex gap-2 rounded-t-[2rem] shadow-2xl">
               <input value={commentInput} onChange={(e) => setCommentInput(e.target.value)} placeholder="응원의 한마디를 적어보세요" className="flex-1 p-4 bg-slate-50 rounded-2xl outline-none" onKeyPress={(e) => e.key === 'Enter' && addComment()} />
-              <button onClick={addComment} className="bg-indigo-600 text-white px-8 rounded-2xl font-bold">보내기</button>
+              <button onClick={addComment} className="bg-indigo-600 text-white px-8 rounded-2xl font-bold shadow-lg shadow-indigo-100">보내기</button>
             </div>
-            <button onClick={() => setShowComments(null)} className="absolute top-8 right-8 text-slate-300 text-3xl">×</button>
+            <button onClick={() => setShowComments(null)} className="absolute top-8 right-8 text-slate-300 text-3xl hover:text-indigo-600 transition-all">×</button>
           </div>
         </div>
       )}
 
-      {/* 알림창 */}
+      {/* 알림 메시지 상자 */}
       {alert.show && (
         <div className="fixed inset-0 bg-black/40 z-[6000] flex items-center justify-center p-6 backdrop-blur-md">
           <div className="bg-white p-10 rounded-[3.5rem] text-center w-full max-w-xs shadow-2xl animate-in zoom-in duration-300 border-b-8 border-indigo-500">
-            <div className="text-6xl mb-6">{alert.icon}</div><p className="font-bold text-slate-800 text-xl mb-10 leading-tight font-gaegu">{alert.msg}</p>
-            <button onClick={closeAlert} className="w-full bg-indigo-600 text-white p-5 rounded-3xl font-bold text-xl active:scale-95 transition">확인</button>
+            <div className="text-6xl mb-6 drop-shadow-lg">{alert.icon}</div><p className="font-bold text-slate-800 text-xl mb-10 leading-tight font-gaegu">{alert.msg}</p>
+            <button onClick={closeAlert} className="w-full bg-indigo-600 text-white p-5 rounded-3xl font-bold text-xl active:scale-95 transition shadow-lg shadow-indigo-100">확인 완료!</button>
           </div>
         </div>
       )}
