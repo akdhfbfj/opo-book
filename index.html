@@ -4,8 +4,8 @@ import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, addDoc, onSnapshot, query, doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 
 /**
- * [STEP 1] Firebase 설정
- * 사용자가 제공한 SDK 설정을 그대로 반영했습니다.
+ * [STEP 1] 우리 학교 Firebase 설정
+ * 보내주신 SDK 정보를 코딩 상자에 안전하게 담았습니다.
  */
 const firebaseConfig = {
   apiKey: "AIzaSyDOEDyzO5kYY-OCmqJZrUU1rfenP8Kz8tM",
@@ -17,22 +17,30 @@ const firebaseConfig = {
   measurementId: "G-K1TD0BB954"
 };
 
-// Firebase 초기화
+// Firebase 엔진 가동!
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// 앱 식별 아이디 (우리 반 데이터가 저장될 폴더 이름이라고 생각하면 쉬워요!)
+// 우리 학교 데이터 상자 이름
 const appId = "opo-digital-bookroad-v5";
 
-// KDC 한국십진분류법 (도서관에서 책을 나누는 기준이에요)
+// 도서관 십진분류법 (KDC) 목록
 const KDC_LABELS = {
-    "000": "총류", "100": "철학", "200": "종교", "300": "사회과학", "400": "자연과학",
-    "500": "기술과학", "600": "예술", "700": "언어", "800": "문학", "900": "역사"
+  "000": "총류 (백과사전, 잡지)",
+  "100": "철학 (생각, 마음)",
+  "200": "종교 (신화, 믿음)",
+  "300": "사회과학 (경제, 정치)",
+  "400": "자연과학 (동식물, 우주)",
+  "500": "기술과학 (의학, 발명)",
+  "600": "예술 (음악, 미술, 체육)",
+  "700": "언어 (국어, 외국어)",
+  "800": "문학 (동화, 소설, 시)",
+  "900": "역사 (위인전, 지도)"
 };
 
 export default function App() {
-  // [상태 관리] 앱에서 변하는 데이터들을 저장하는 상자들입니다.
+  // 앱의 여러 상태를 저장하는 변수들
   const [user, setUser] = useState(null);
   const [userName, setUserName] = useState("");
   const [userNo, setUserNo] = useState("");
@@ -45,12 +53,11 @@ export default function App() {
   const [selectedLifeImg, setSelectedLifeImg] = useState(null);
 
   /**
-   * [STEP 2] 로그인 처리
-   * 앱이 켜지면 자동으로 Firebase에 '익명'으로 연결합니다.
-   * 로컬 스토리지에 저장된 이름과 번호를 가져옵니다.
+   * [STEP 2] 로그인 및 사용자 확인
+   * 앱이 시작될 때 익명으로 서버에 연결하고, 저장된 이름을 불러옵니다.
    */
   useEffect(() => {
-    signInAnonymously(auth).catch(err => console.error("Firebase 연결 실패:", err));
+    signInAnonymously(auth).catch(err => console.error("서버 연결 실패:", err));
     
     const unsubscribe = onAuthStateChanged(auth, (userData) => {
       if (userData) {
@@ -67,21 +74,20 @@ export default function App() {
   }, []);
 
   /**
-   * [STEP 3] 데이터 실시간 감시
-   * 데이터베이스(Firestore)에 새 글이 올라오면 화면을 자동으로 새로고침합니다.
+   * [STEP 3] 데이터 실시간 동기화
+   * 친구들이 글을 쓰면 내 화면에도 바로 나타나게 해주는 마법 같은 코드예요.
    */
   useEffect(() => {
     if (!user) return;
 
-    // 1. 우리 반 전체가 보는 게시판 경로
+    // 전체 게시글 가져오기
     const postsPath = `artifacts/${appId}/public/data/posts`;
     const unsubPosts = onSnapshot(collection(db, postsPath), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // 최신글이 위로 오도록 정렬
       setPosts(data.sort((a, b) => b.timestamp - a.timestamp));
     });
 
-    // 2. 나만 보는 비밀 우체통 경로
+    // 내 비밀 메시지 가져오기
     const secretsPath = `artifacts/${appId}/users/${user.uid}/secrets`;
     const unsubSecrets = onSnapshot(collection(db, secretsPath), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -91,24 +97,24 @@ export default function App() {
     return () => { unsubPosts(); unsubSecrets(); };
   }, [user]);
 
-  // 로그인 확인 버튼 클릭 시
+  // 로그인 처리 함수
   const handleLogin = () => {
-    if (!userName || !userNo) return showAlert('이름과 번호를 써주세요!', '👀');
+    if (!userName || !userNo) return showAlert('이름과 번호를 꼭 적어주세요! ✍️', '👀');
     localStorage.setItem('opo_user_v5_info', JSON.stringify({ name: userName, no: userNo }));
-    showAlert(`${userName} 작가님 반가워요!`, '🎈');
+    showAlert(`${userName} 작가님, 환영합니다!`, '🎈');
   };
 
+  // 알림창 띄우기 함수
   const showAlert = (msg, icon) => setAlert({ show: true, msg, icon: icon || '🌟' });
   const closeAlert = () => setAlert({ ...alert, show: false });
 
   /**
-   * [STEP 4] 글 저장하기 기능
-   * 독서 기록 또는 오늘의 조각을 데이터베이스에 저장합니다.
+   * [STEP 4] 글 저장하기 (독서록/일상)
    */
   const savePost = async (type) => {
     if (!user) return;
     const content = document.getElementById(type === 'book' ? 'book-content' : 'life-content').value;
-    if (!content) return showAlert('내용을 적어주세요!', '✍️');
+    if (!content) return showAlert('내용을 입력해주세요!', '✍️');
 
     const newPost = {
       type,
@@ -127,27 +133,27 @@ export default function App() {
       newPost.author = document.getElementById('book-author').value || '작자미상';
       newPost.category = document.getElementById('book-category').value;
     } else if (selectedLifeImg) {
-      newPost.imageUrl = selectedLifeImg; // 사진이 있다면 사진도 함께 저장
+      newPost.imageUrl = selectedLifeImg;
     }
 
     try {
-        await addDoc(collection(db, `artifacts/${appId}/public/data/posts`), newPost);
-        setActiveTab('feed');
-        showAlert('소중한 기록이 저장되었습니다!', '✨');
-        
-        // 입력창 비우기
-        if(type === 'book') {
-            document.getElementById('book-title').value = '';
-            document.getElementById('book-content').value = '';
-        } else {
-            document.getElementById('life-content').value = '';
-            setSelectedLifeImg(null);
-        }
+      await addDoc(collection(db, `artifacts/${appId}/public/data/posts`), newPost);
+      setActiveTab('feed');
+      showAlert('저장 완료! 친구들에게 공유되었어요.', '✨');
+      // 입력칸 비우기
+      if(type === 'book') {
+        document.getElementById('book-title').value = '';
+        document.getElementById('book-content').value = '';
+      } else {
+        document.getElementById('life-content').value = '';
+        setSelectedLifeImg(null);
+      }
     } catch (e) {
-        showAlert('저장에 실패했어요. 인터넷을 확인해주세요.', '❌');
+      showAlert('저장에 실패했어요. 인터넷을 확인해봐요!', '❌');
     }
   };
 
+  // 좋아요(응원) 기능
   const toggleLike = async (postId) => {
     const post = posts.find(p => p.id === postId);
     const userKey = `${userNo}_${userName}`;
@@ -156,6 +162,7 @@ export default function App() {
     else await updateDoc(postRef, { likes: arrayUnion(userKey) });
   };
 
+  // 댓글 달기 기능
   const addComment = async () => {
     if (!commentInput) return;
     const postRef = doc(db, `artifacts/${appId}/public/data/posts`, showComments.id);
@@ -170,6 +177,7 @@ export default function App() {
     setCommentInput("");
   };
 
+  // 비밀 메시지 보내기
   const sendSecret = async () => {
     const content = document.getElementById('secret-content').value;
     if (!content) return;
@@ -177,9 +185,10 @@ export default function App() {
       writer: userName, writerNo: userNo, content, timestamp: Date.now(), date: new Date().toLocaleString()
     });
     document.getElementById('secret-content').value = '';
-    showAlert('선생님께 전달되었습니다!', '💌');
+    showAlert('선생님께 마음이 전달되었습니다.', '💌');
   };
 
+  // 이미지 업로드 미리보기
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -189,10 +198,7 @@ export default function App() {
     }
   };
 
-  /**
-   * [STEP 5] 달력 스티커 렌더링
-   * 내가 책을 읽은 날짜를 찾아 스티커를 붙여줍니다.
-   */
+  // 달력 렌더링 (내가 읽은 날짜에 스티커 붙이기)
   const renderCalendar = () => {
     const now = new Date();
     const lastDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
@@ -209,10 +215,10 @@ export default function App() {
     for(let i=1; i<=lastDate; i++) {
         const count = myHistory[i] || 0;
         days.push(
-            <div key={i} className={`relative p-1 h-14 border rounded-xl flex flex-col items-center ${i === now.getDate() ? 'bg-indigo-50 border-indigo-300' : 'bg-slate-50 border-transparent'}`}>
+            <div key={i} className={`relative p-1 h-14 border rounded-xl flex flex-col items-center ${i === now.getDate() ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-transparent'}`}>
                 <span className="text-[10px] font-bold text-slate-400">{i}</span>
                 <div className="flex flex-wrap justify-center gap-0.5 mt-1">
-                    {count > 0 && (count <= 3 ? [...Array(count)].map((_,idx) => <i key={idx} className="fa-solid fa-book text-[8px] text-indigo-400"></i>) : <><i className="fa-solid fa-book text-[8px] text-indigo-400"></i><span className="text-[8px] font-bold text-indigo-600">3+</span></>)}
+                    {count > 0 && (count <= 3 ? [...Array(count)].map((_,idx) => <i key={idx} className="fa-solid fa-book text-[8px] text-indigo-400 animate-bounce"></i>) : <><i className="fa-solid fa-book text-[8px] text-indigo-400"></i><span className="text-[8px] font-bold text-indigo-600">3+</span></>)}
                 </div>
             </div>
         );
@@ -220,18 +226,20 @@ export default function App() {
     return days;
   };
 
-  // 로그인 화면 (이름이 없을 때만 보임)
+  // --- UI 컴포넌트 시작 ---
+
+  // 1. 로그인 전 화면
   if (!user || !userName) {
     return (
       <div className="fixed inset-0 bg-indigo-600 flex items-center justify-center p-6 text-white font-sans">
-        <div className="text-center w-full max-w-sm animate-in zoom-in duration-500">
+        <div className="text-center w-full max-w-sm">
             <div className="bg-white/10 backdrop-blur-xl p-10 rounded-[3.5rem] border border-white/20 shadow-2xl">
-                <h1 className="text-4xl font-bold font-gaegu mb-2 text-yellow-300">오포초등학교</h1>
+                <h1 className="text-4xl font-bold font-gaegu mb-2 text-yellow-300 drop-shadow-md">오포초등학교</h1>
                 <h2 className="text-xl font-bold font-gaegu mb-8 text-indigo-100 italic">디지털 북로드 V5</h2>
                 <div className="space-y-4 text-gray-800">
-                    <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="이름을 입력하세요" className="w-full p-4 rounded-2xl outline-none shadow-inner" />
-                    <input type="number" value={userNo} onChange={(e) => setUserNo(e.target.value)} placeholder="번호 입력" className="w-full p-4 rounded-2xl outline-none shadow-inner" />
-                    <button onClick={handleLogin} className="w-full bg-yellow-400 text-indigo-900 font-bold p-4 rounded-2xl text-xl active:scale-95 transition shadow-lg">입장하기! 🎒</button>
+                    <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="이름을 입력하세요" className="w-full p-4 rounded-2xl outline-none shadow-inner text-center font-bold" />
+                    <input type="number" value={userNo} onChange={(e) => setUserNo(e.target.value)} placeholder="번호 입력" className="w-full p-4 rounded-2xl outline-none shadow-inner text-center font-bold" />
+                    <button onClick={handleLogin} className="w-full bg-yellow-400 text-indigo-900 font-bold p-4 rounded-2xl text-xl active:scale-95 transition shadow-lg hover:bg-yellow-300">들어가기 🚀</button>
                 </div>
             </div>
         </div>
@@ -239,36 +247,37 @@ export default function App() {
     );
   }
 
+  // 2. 메인 앱 화면
   return (
     <div className="max-w-xl mx-auto p-4 font-sans pb-32 min-h-screen bg-slate-50">
-      {/* 상단 헤더 */}
+      {/* 헤더 부분 */}
       <header className="flex justify-between items-center mb-6 pt-4 px-2">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl bg-white shadow-lg flex items-center justify-center text-indigo-200 text-2xl rotate-3"><i className="fa-solid fa-user"></i></div>
           <div>
             <h2 className="text-2xl font-bold text-slate-800 font-gaegu leading-none mb-1"><span className="text-indigo-600">{userName}</span> 작가님</h2>
-            <div className="flex items-center gap-2"><span className="bg-indigo-500 text-white text-[9px] px-2 py-0.5 rounded-full font-bold">LV.1 새싹</span><span className="text-[10px] text-slate-400 font-bold">{userNo}번</span></div>
+            <div className="flex items-center gap-2"><span className="bg-indigo-500 text-white text-[9px] px-2 py-0.5 rounded-full font-bold shadow-md">LV.1 새싹</span><span className="text-[10px] text-slate-400 font-bold tracking-widest">{userNo}번</span></div>
           </div>
         </div>
       </header>
 
-      {/* 메인 화면 탭 전환 */}
+      {/* 탭별 내용 */}
       <div className="min-h-[70vh]">
         {activeTab === 'feed' && (
           <div className="space-y-6">
             <h3 className="font-bold text-slate-800 text-xl font-gaegu ml-2">우리 반 타임라인 💬</h3>
-            {posts.length === 0 ? <div className="text-center py-20 text-slate-300 italic font-gaegu">아직 우리 반에 소식이 없어요.</div> : posts.map(post => (
+            {posts.length === 0 ? <div className="text-center py-20 text-slate-300 italic font-gaegu text-xl">아직 첫 글이 없어요. 첫 번째 주인공이 되어보세요!</div> : posts.map(post => (
               <div key={post.id} className="bg-white rounded-[2rem] p-6 shadow-sm border-4 border-white transition-all hover:shadow-md">
                 <div className="flex justify-between items-center mb-4">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-200"><i className="fa-solid fa-user"></i></div>
-                    <div><h5 className="font-bold text-slate-800 font-gaegu text-lg">{post.writer}</h5><p className="text-[9px] text-slate-300 font-bold">{post.writerNo}번</p></div>
+                    <div><h5 className="font-bold text-slate-800 font-gaegu text-lg leading-tight">{post.writer}</h5><p className="text-[9px] text-slate-300 font-bold">{post.writerNo}번 작가</p></div>
                   </div>
-                  <span className="text-[9px] font-bold bg-indigo-50 text-indigo-400 px-2 py-1 rounded-lg uppercase italic">{post.type === 'book' ? KDC_LABELS[post.category] : 'Life Piece'}</span>
+                  <span className="text-[9px] font-bold bg-indigo-50 text-indigo-400 px-2 py-1 rounded-lg uppercase tracking-tighter">{post.type === 'book' ? KDC_LABELS[post.category].split(' ')[0] : 'DAILY'}</span>
                 </div>
-                {post.imageUrl && <img src={post.imageUrl} className="w-full rounded-2xl mb-4 border-2 border-white shadow-sm" alt="post" />}
+                {post.imageUrl && <img src={post.imageUrl} className="w-full rounded-2xl mb-4 border-2 border-slate-50 shadow-sm" alt="post" />}
                 {post.type === 'book' && <div className="bg-indigo-50/50 p-4 rounded-2xl mb-4 border-l-4 border-indigo-400 shadow-inner"><h4 className="font-bold text-slate-800 font-gaegu">📖 {post.title}</h4><p className="text-[10px] text-indigo-400">{post.author}</p></div>}
-                <div className="text-sm text-slate-600 leading-relaxed mb-5 whitespace-pre-wrap">{post.content}</div>
+                <div className="text-sm text-slate-600 leading-relaxed mb-5 whitespace-pre-wrap px-1">{post.content}</div>
                 <div className="flex items-center gap-3 pt-4 border-t border-slate-50">
                   <button onClick={() => toggleLike(post.id)} className={`px-4 py-2 rounded-full border transition-all active:scale-125 ${post.likes.includes(`${userNo}_${userName}`) ? 'text-pink-500 bg-pink-50 border-pink-100' : 'text-slate-400 bg-slate-50 border-transparent'}`}><i className={`fa-${post.likes.includes(`${userNo}_${userName}`) ? 'solid' : 'regular'} fa-heart mr-1`}></i>{post.likes.length}</button>
                   <button onClick={() => setShowComments(post)} className="px-4 py-2 rounded-full bg-slate-50 text-slate-400"><i className="fa-regular fa-comment mr-1"></i>{post.comments.length}</button>
@@ -279,88 +288,100 @@ export default function App() {
         )}
 
         {activeTab === 'write-book' && (
-          <div className="bg-white rounded-[2rem] p-8 shadow-sm border-4 border-white">
-            <h3 className="text-3xl font-bold mb-6 text-slate-800 font-gaegu text-center underline decoration-indigo-200">📖 독서 기록장</h3>
+          <div className="bg-white rounded-[2rem] p-8 shadow-lg border-4 border-white animate-in zoom-in duration-300">
+            <h3 className="text-3xl font-bold mb-6 text-slate-800 font-gaegu text-center underline decoration-indigo-100">📖 독서 기록장</h3>
             <div className="space-y-4">
-              <select id="book-category" className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-indigo-600 outline-none">{Object.entries(KDC_LABELS).map(([k,v]) => <option key={k} value={k}>{k} {v}</option>)}</select>
-              <input id="book-title" placeholder="책 제목을 적어주세요" className="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none focus:ring-2 ring-indigo-200" />
-              <input id="book-author" placeholder="저자(지은이)" className="w-full p-4 bg-slate-50 rounded-2xl outline-none" />
-              <textarea id="book-content" placeholder="이 책을 읽고 내 생각이 어떻게 자라났나요?" className="w-full p-4 bg-slate-50 rounded-2xl h-48 outline-none resize-none leading-relaxed"></textarea>
-              <button onClick={() => savePost('book')} className="w-full bg-indigo-600 text-white font-bold p-5 rounded-3xl text-xl shadow-lg active:scale-95 transition">우리 반에 공유하기 🚀</button>
+              <select id="book-category" className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-indigo-600 outline-none border-2 border-transparent focus:border-indigo-400">{Object.entries(KDC_LABELS).map(([k,v]) => <option key={k} value={k}>{k} {v}</option>)}</select>
+              <input id="book-title" placeholder="책 제목을 적어주세요" className="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-400 shadow-inner" />
+              <input id="book-author" placeholder="저자(지은이)" className="w-full p-4 bg-slate-50 rounded-2xl outline-none border-2 border-transparent focus:border-indigo-400" />
+              <textarea id="book-content" placeholder="이 책을 읽고 내 생각이 어떻게 자라났나요?" className="w-full p-4 bg-slate-50 rounded-2xl h-48 outline-none resize-none leading-relaxed border-2 border-transparent focus:border-indigo-400 shadow-inner"></textarea>
+              <button onClick={() => savePost('book')} className="w-full bg-indigo-600 text-white font-bold p-5 rounded-3xl text-xl shadow-xl active:scale-95 transition-all">반 친구들에게 자랑하기 🚀</button>
             </div>
           </div>
         )}
 
         {activeTab === 'write-life' && (
-          <div className="bg-white rounded-[2rem] p-8 shadow-sm border-4 border-white">
-            <h3 className="text-3xl font-bold mb-6 text-slate-800 font-gaegu text-center underline decoration-emerald-200">✨ 오늘의 조각</h3>
+          <div className="bg-white rounded-[2rem] p-8 shadow-lg border-4 border-white">
+            <h3 className="text-3xl font-bold mb-6 text-slate-800 font-gaegu text-center underline decoration-emerald-100">✨ 오늘의 조각</h3>
             <div className="mb-4 text-center">
-                {selectedLifeImg && <div className="relative mb-4"><img src={selectedLifeImg} className="w-full rounded-2xl border shadow-md" alt="preview" /><button onClick={() => setSelectedLifeImg(null)} className="absolute top-2 right-2 bg-black/50 text-white w-8 h-8 rounded-full">×</button></div>}
-                <label className="flex items-center justify-center gap-2 w-full p-6 bg-slate-50 rounded-2xl border-4 border-dashed border-slate-100 cursor-pointer text-slate-400 font-bold hover:bg-slate-100 transition"><i className="fa-solid fa-camera text-2xl"></i> 사진 올리기(선택)<input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} /></label>
+                {selectedLifeImg && <div className="relative mb-4"><img src={selectedLifeImg} className="w-full rounded-2xl border-4 border-white shadow-md" alt="preview" /><button onClick={() => setSelectedLifeImg(null)} className="absolute top-2 right-2 bg-black/50 text-white w-8 h-8 rounded-full flex items-center justify-center">×</button></div>}
+                <label className="flex items-center justify-center gap-2 w-full p-8 bg-slate-50 rounded-2xl border-4 border-dashed border-slate-100 cursor-pointer text-slate-400 font-bold hover:bg-slate-100 transition"><i className="fa-solid fa-camera text-3xl"></i> 사진 올리기(선택)<input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} /></label>
             </div>
-            <textarea id="life-content" placeholder="오늘 있었던 재미있는 일을 자유롭게 기록해요." className="w-full p-4 bg-slate-50 rounded-2xl h-60 outline-none resize-none leading-relaxed"></textarea>
-            <button onClick={() => savePost('life')} className="w-full bg-emerald-500 text-white font-bold p-5 rounded-3xl text-xl shadow-lg active:scale-95 transition mt-4">조각 보관하기 📮</button>
+            <textarea id="life-content" placeholder="오늘 있었던 재미있는 일을 자유롭게 기록해요. 나중에 책의 재료가 됩니다!" className="w-full p-4 bg-slate-50 rounded-2xl h-60 outline-none resize-none leading-relaxed shadow-inner border-2 border-transparent focus:border-emerald-400"></textarea>
+            <button onClick={() => savePost('life')} className="w-full bg-emerald-500 text-white font-bold p-5 rounded-3xl text-xl shadow-xl active:scale-95 transition mt-4">소중하게 보관하기 📮</button>
           </div>
         )}
 
         {activeTab === 'secret' && (
-          <div className="bg-pink-50 p-8 rounded-[2rem] border-4 border-white shadow-sm">
-            <h3 className="text-3xl font-bold mb-4 text-slate-800 font-gaegu text-center text-pink-500 italic">📮 마음 우체통</h3>
-            <div className="space-y-4 mb-6 max-h-64 overflow-y-auto pr-2">
-              {secrets.map(s => <div key={s.id} className="flex justify-end"><div className="bg-pink-500 text-white p-4 rounded-2xl rounded-tr-none text-sm shadow-md">{s.content}<p className="text-[8px] opacity-60 mt-1 text-right font-bold italic">{s.date}</p></div></div>)}
+          <div className="bg-pink-50 p-8 rounded-[2rem] border-4 border-white shadow-md">
+            <h3 className="text-3xl font-bold mb-4 text-slate-800 font-gaegu text-center text-pink-500 italic border-b-2 border-pink-100 pb-2">📮 마음 우체통</h3>
+            <p className="text-center text-pink-300 text-[11px] font-bold uppercase mb-6 tracking-widest leading-relaxed">선생님만 읽을 수 있는 비밀 편지예요.<br />고민이나 나누고 싶은 말을 적어주세요.</p>
+            <div className="space-y-4 mb-6 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+              {secrets.length === 0 ? <div className="text-center py-10 text-pink-200 italic font-gaegu text-xl">첫 편지를 기다리고 있어요!</div> : secrets.map(s => <div key={s.id} className="flex justify-end mb-2 animate-in slide-in-from-right duration-300"><div className="bg-pink-500 text-white p-4 rounded-2xl rounded-tr-none text-sm shadow-md leading-relaxed">{s.content}<p className="text-[8px] opacity-60 mt-2 text-right font-bold uppercase tracking-widest">{s.date}</p></div></div>)}
             </div>
-            <textarea id="secret-content" placeholder="선생님께 드릴 말씀이 있어요..." className="w-full p-4 bg-white rounded-2xl h-32 outline-none border-2 border-pink-200 text-sm shadow-inner"></textarea>
-            <button onClick={sendSecret} className="w-full bg-pink-500 text-white font-bold p-4 rounded-2xl mt-4 active:scale-95 transition shadow-lg">선생님께 보내기 💌</button>
+            <textarea id="secret-content" placeholder="선생님께 드릴 말씀이 있어요..." className="w-full p-4 bg-white rounded-2xl h-32 outline-none border-2 border-pink-200 text-sm shadow-inner focus:border-pink-400"></textarea>
+            <button onClick={sendSecret} className="w-full bg-pink-500 text-white font-bold p-4 rounded-2xl mt-4 active:scale-95 transition shadow-lg shadow-pink-200 font-gaegu text-xl">선생님께 보내기 💌</button>
           </div>
         )}
 
         {activeTab === 'admin' && (
           <div className="space-y-6">
-            <div className="bg-white rounded-[2rem] p-6 shadow-sm border-4 border-white">
-              <h3 className="text-xl font-bold text-slate-800 font-gaegu mb-4"><i className="fa-solid fa-calendar-days text-indigo-400 mr-2"></i>나의 독서 달력</h3>
-              <div className="grid grid-cols-7 gap-2 text-center text-[10px] font-bold text-slate-300 mb-2 uppercase italic"><div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div></div>
+            <div className="bg-white rounded-[2rem] p-8 shadow-sm border-4 border-white">
+              <h3 className="text-xl font-bold text-slate-800 font-gaegu mb-4"><i className="fa-solid fa-calendar-days text-indigo-400 mr-2"></i>나의 독서 마일리지 달력</h3>
+              <div className="grid grid-cols-7 gap-2 text-center text-[10px] font-bold text-slate-300 mb-2 italic"><div>SUN</div><div>MON</div><div>TUE</div><div>WED</div><div>THU</div><div>FRI</div><div>SAT</div></div>
               <div className="grid grid-cols-7 gap-1">{renderCalendar()}</div>
+              <div className="mt-6 p-4 bg-indigo-50 rounded-2xl flex justify-between items-center border border-indigo-100">
+                <span className="text-xs font-bold text-indigo-500">누적 독서량</span>
+                <span className="text-2xl font-bold text-indigo-600 font-gaegu">{posts.filter(p => p.writerNo === userNo && p.type === 'book').length} 권</span>
+              </div>
             </div>
-            <button onClick={() => { localStorage.clear(); location.reload(); }} className="w-full text-slate-300 underline text-[10px] font-bold py-10 hover:text-red-400 tracking-[0.3em] transition-all">LOGOUT / CLEAR DATA</button>
+            <button onClick={() => { if(confirm('로그아웃 하시겠습니까? 기기의 이름 정보가 사라집니다.')) { localStorage.clear(); location.reload(); } }} className="w-full text-slate-300 underline text-[10px] font-bold py-10 hover:text-red-400 tracking-[0.3em] transition-all">LOGOUT / SYSTEM RESET</button>
           </div>
         )}
       </div>
 
-      {/* 하단 내비게이션 (전체 탭을 보여줍니다) */}
-      <nav className="fixed bottom-4 left-4 right-4 bg-white/90 backdrop-blur-md border border-white shadow-2xl rounded-[2.5rem] px-6 py-4 flex justify-between items-center z-[4000]">
+      {/* 하단 바 */}
+      <nav className="fixed bottom-4 left-4 right-4 bg-white/90 backdrop-blur-xl border-2 border-white shadow-2xl rounded-[2.5rem] px-6 py-4 flex justify-between items-end z-[4000]">
         {[ ['feed', 'house-chimney', '홈'], ['write-book', 'book-open-reader', '기록'], ['write-life', 'pen-fancy', '조각'], ['secret', 'envelope-heart', '우체통'], ['admin', 'star-of-life', '관리'] ].map(([tab, icon, label]) => (
-          <button key={tab} onClick={() => setActiveTab(tab)} className={`flex flex-col items-center gap-1 transition-all ${activeTab === tab ? 'text-indigo-600 scale-110 -translate-y-2' : 'text-slate-300'}`}><i className={`fa-solid fa-${icon} text-xl`}></i><span className="text-[8px] font-bold">{label}</span></button>
+          <button key={tab} onClick={() => setActiveTab(tab)} className={`flex flex-col items-center gap-1 transition-all flex-1 ${activeTab === tab ? 'text-indigo-600 scale-110 -translate-y-2' : 'text-slate-300'}`}><i className={`fa-solid fa-${icon} text-xl`}></i><span className="text-[8px] font-bold">{label}</span></button>
         ))}
       </nav>
 
-      {/* 댓글 팝업창 */}
+      {/* 댓글 상자 */}
       {showComments && (
-        <div className="fixed inset-0 bg-black/60 z-[5000] flex flex-col justify-end">
-          <div className="bg-white rounded-t-[3rem] p-8 w-full max-w-xl mx-auto animate-in slide-in-from-bottom duration-300">
-            <h4 className="font-bold text-center mb-8 font-gaegu text-3xl text-indigo-600">따뜻한 응원 댓글 💬</h4>
-            <div className="space-y-4 max-h-[40vh] overflow-y-auto mb-24 px-2">
-              {showComments.comments.length === 0 ? <p className="text-center py-10 text-slate-300 italic font-gaegu">첫 번째 응원 댓글을 달아주세요!</p> : showComments.comments.map((c, i) => (
-                <div key={i} className="bg-slate-50 p-4 rounded-2xl border-2 border-white shadow-sm animate-in fade-in"><p className="text-[10px] font-bold text-indigo-500 mb-1">{c.writer} 작가님</p><p className="text-sm text-slate-700 leading-relaxed font-medium">{c.content}</p></div>
+        <div className="fixed inset-0 bg-black/60 z-[5000] flex flex-col justify-end backdrop-blur-sm">
+          <div className="bg-white rounded-t-[3rem] p-8 w-full max-w-xl mx-auto animate-in slide-in-from-bottom duration-300 border-t-8 border-indigo-400 shadow-2xl">
+            <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-8"></div>
+            <h4 className="font-bold text-center mb-8 font-gaegu text-3xl text-indigo-600 italic">친구의 기록에 댓글 달기 💬</h4>
+            <div className="space-y-4 max-h-[40vh] overflow-y-auto mb-24 px-2 custom-scrollbar">
+              {showComments.comments.length === 0 ? <div className="text-center py-10 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-100"><p className="text-slate-300 italic font-gaegu text-xl">첫 번째 응원 댓글을 달아보세요!</p></div> : showComments.comments.map((c, i) => (
+                <div key={i} className="bg-slate-50 p-4 rounded-2xl shadow-sm border-2 border-white animate-in fade-in duration-500"><p className="text-[10px] font-bold text-indigo-500 mb-1">{c.writer} 작가님</p><p className="text-sm text-slate-700 leading-relaxed font-medium">{c.content}</p></div>
               ))}
             </div>
             <div className="absolute bottom-0 left-0 right-0 p-6 bg-white border-t flex gap-2 rounded-t-[2rem] shadow-2xl">
-              <input value={commentInput} onChange={(e) => setCommentInput(e.target.value)} placeholder="응원의 한마디를 적어보세요" className="flex-1 p-4 bg-slate-50 rounded-2xl outline-none" onKeyPress={(e) => e.key === 'Enter' && addComment()} />
-              <button onClick={addComment} className="bg-indigo-600 text-white px-8 rounded-2xl font-bold shadow-lg shadow-indigo-100">보내기</button>
+              <input value={commentInput} onChange={(e) => setCommentInput(e.target.value)} placeholder="멋진 한마디를 적어보세요" className="flex-1 p-4 bg-slate-50 rounded-2xl outline-none font-medium focus:ring-2 ring-indigo-200" onKeyPress={(e) => e.key === 'Enter' && addComment()} />
+              <button onClick={addComment} className="bg-indigo-600 text-white px-8 rounded-2xl font-bold shadow-lg active:scale-95 transition-all">보내기</button>
             </div>
             <button onClick={() => setShowComments(null)} className="absolute top-8 right-8 text-slate-300 text-3xl hover:text-indigo-600 transition-all">×</button>
           </div>
         </div>
       )}
 
-      {/* 알림 메시지 상자 */}
+      {/* 알림 메시지 */}
       {alert.show && (
         <div className="fixed inset-0 bg-black/40 z-[6000] flex items-center justify-center p-6 backdrop-blur-md">
           <div className="bg-white p-10 rounded-[3.5rem] text-center w-full max-w-xs shadow-2xl animate-in zoom-in duration-300 border-b-8 border-indigo-500">
-            <div className="text-6xl mb-6 drop-shadow-lg">{alert.icon}</div><p className="font-bold text-slate-800 text-xl mb-10 leading-tight font-gaegu">{alert.msg}</p>
-            <button onClick={closeAlert} className="w-full bg-indigo-600 text-white p-5 rounded-3xl font-bold text-xl active:scale-95 transition shadow-lg shadow-indigo-100">확인 완료!</button>
+            <div className="text-7xl mb-6 drop-shadow-lg">{alert.icon}</div><p className="font-bold text-slate-800 text-2xl mb-10 leading-tight font-gaegu">{alert.msg}</p>
+            <button onClick={closeAlert} className="w-full bg-indigo-600 text-white p-5 rounded-3xl font-bold text-xl active:scale-95 transition shadow-lg shadow-indigo-100">확인 완료! 🌟</button>
           </div>
         </div>
       )}
+
+      <style jsx>{`
+        .font-gaegu { font-family: 'Gaegu', cursive; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+      `}</style>
     </div>
   );
 }
