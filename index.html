@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>오포초 디지털 북로드 V5 📚</title>
+    <!-- 디자인 라이브러리 (Tailwind CSS) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 아이콘 라이브러리 (Font Awesome) -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- 구글 폰트 -->
+    <link href="https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&family=Nanum+Gothic:wght@400;700&display=swap" rel="stylesheet">
+    <!-- React 및 Babel (JSX 해석용) -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body { 
+            font-family: 'Nanum Gothic', sans-serif; 
+            background: linear-gradient(135deg, #fff9db 0%, #e3f2fd 100%);
+            min-height: 100vh;
+        }
+        .font-gaegu { font-family: 'Gaegu', cursive; }
+        .bubble-card {
+            background: rgba(255, 255, 255, 0.98);
+            border-radius: 2rem;
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.05);
+            border: 4px solid white;
+        }
+        .nav-item.active {
+            color: #4f46e5;
+            transform: scale(1.1) translateY(-8px);
+        }
+        .calendar-day {
+            aspect-ratio: 1 / 1.2;
+            border-radius: 0.75rem;
+            background: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            padding: 4px;
+            font-size: 10px;
+            border: 1px solid #f1f5f9;
+        }
+        .calendar-day.today { border: 2px solid #6366f1; background: #eef2ff; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        
+        /* 애니메이션 효과 */
+        .animate-pop { animation: pop 0.3s ease-out; }
+        @keyframes pop {
+            0% { transform: scale(0.95); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- Firebase 및 React 통합 스크립트 -->
+    <!-- type="text/babel"과 data-type="module"을 함께 사용하여 JSX와 Import를 모두 처리합니다 -->
+    <script type="text/babel" data-type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, doc, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+        // [사용자 Firebase 설정]
+        const firebaseConfig = {
+            apiKey: "AIzaSyDOEDyzO5kYY-OCmqJZrUU1rfenP8Kz8tM",
+            authDomain: "opoproject-c291b.firebaseapp.com",
+            projectId: "opoproject-c291b",
+            storageBucket: "opoproject-c291b.firebasestorage.app",
+            messagingSenderId: "792551343830",
+            appId: "1:792551343830:web:b3e10df0bf4b92c4c4eb77",
+            measurementId: "G-K1TD0BB954"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        
+        // 데이터 저장 경로 식별자
+        const appId = "opo-digital-bookroad-v5";
+
+        const { useState, useEffect } = React;
+
+        const KDC_LABELS = {
+            "000": "총류", "100": "철학", "200": "종교", "300": "사회과학", "400": "자연과학",
+            "500": "기술과학", "600": "예술", "700": "언어", "800": "문학", "900": "역사"
+        };
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [userName, setUserName] = useState("");
+            const [userNo, setUserNo] = useState("");
+            const [activeTab, setActiveTab] = useState('feed');
+            const [posts, setPosts] = useState([]);
+            const [secrets, setSecrets] = useState([]);
+            const [alert, setAlert] = useState({ show: false, msg: '', icon: '' });
+            const [showComments, setShowComments] = useState(null);
+            const [commentInput, setCommentInput] = useState("");
+            const [selectedLifeImg, setSelectedLifeImg] = useState(null);
+
+            // 1. 인증 처리
+            useEffect(() => {
+                const initAuth = async () => {
+                    await signInAnonymously(auth);
+                };
+                initAuth();
+
+                const unsubAuth = onAuthStateChanged(auth, (userData) => {
+                    if (userData) {
+                        setUser(userData);
+                        const saved = localStorage.getItem('opo_user_v5_info');
+                        if (saved) {
+                            const parsed = JSON.parse(saved);
+                            setUserName(parsed.name);
+                            setUserNo(parsed.no);
+                        }
+                    }
+                });
+                return () => unsubAuth();
+            }, []);
+
+            // 2. 실시간 데이터 동기화
+            useEffect(() => {
+                if (!user) return;
+
+                const postsColl = collection(db, 'artifacts', appId, 'public', 'data', 'posts');
+                const unsubPosts = onSnapshot(postsColl, (snapshot) => {
+                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setPosts(data.sort((a, b) => b.timestamp - a.timestamp));
+                });
+
+                const secretsColl = collection(db, 'artifacts', appId, 'users', user.uid, 'secrets');
+                const unsubSecrets = onSnapshot(secretsColl, (snapshot) => {
+                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setSecrets(data.sort((a, b) => a.timestamp - b.timestamp));
+                });
+
+                return () => { unsubPosts(); unsubSecrets(); };
+            }, [user]);
+
+            const handleLogin = () => {
+                if (!userName || !userNo) return showAlert('이름과 번호를 써주세요!', '👀');
+                localStorage.setItem('opo_user_v5_info', JSON.stringify({ name: userName, no: userNo }));
+                showAlert(`${userName} 작가님 반가워요!`, '🎈');
+            };
+
+            const showAlert = (msg, icon) => setAlert({ show: true, msg, icon: icon || '🌟' });
+
+            const savePost = async (type) => {
+                if (!user) return;
+                const content = document.getElementById(type === 'book' ? 'book-content' : 'life-content').value;
+                if (!content) return showAlert('내용을 적어주세요!', '✍️');
+
+                const newPost = {
+                    type,
+                    writer: userName,
+                    writerNo: userNo,
+                    writerUid: user.uid,
+                    content,
+                    timestamp: Date.now(),
+                    likes: [],
+                    comments: [],
+                    date: new Date().toISOString()
+                };
+
+                if (type === 'book') {
+                    newPost.title = document.getElementById('book-title').value;
+                    newPost.author = document.getElementById('book-author').value || '작자미상';
+                    newPost.category = document.getElementById('book-category').value;
+                } else if (selectedLifeImg) {
+                    newPost.imageUrl = selectedLifeImg;
+                }
+
+                try {
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'posts'), newPost);
+                    setActiveTab('feed');
+                    showAlert('저장되었습니다!', '✨');
+                    if(type === 'book') {
+                        document.getElementById('book-title').value = '';
+                        document.getElementById('book-content').value = '';
+                        document.getElementById('book-author').value = '';
+                    } else {
+                        document.getElementById('life-content').value = '';
+                        setSelectedLifeImg(null);
+                    }
+                } catch (e) {
+                    showAlert('저장에 실패했어요.', '❌');
+                }
+            };
+
+            const toggleLike = async (postId) => {
+                const post = posts.find(p => p.id === postId);
+                const userKey = `${userNo}_${userName}`;
+                const postRef = doc(db, 'artifacts', appId, 'public', 'data', 'posts', postId);
+                if (post.likes.includes(userKey)) await updateDoc(postRef, { likes: arrayRemove(userKey) });
+                else await updateDoc(postRef, { likes: arrayUnion(userKey) });
+            };
+
+            const addComment = async () => {
+                if (!commentInput) return;
+                const postRef = doc(db, 'artifacts', appId, 'public', 'data', 'posts', showComments.id);
+                await updateDoc(postRef, {
+                    comments: arrayUnion({
+                        writer: userName,
+                        content: commentInput,
+                        date: new Date().toISOString(),
+                        timestamp: Date.now()
+                    })
+                });
+                setCommentInput("");
+            };
+
+            const sendSecret = async () => {
+                const content = document.getElementById('secret-content').value;
+                if (!content) return;
+                await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'secrets'), {
+                    writer: userName, writerNo: userNo, content, timestamp: Date.now(), date: new Date().toLocaleString()
+                });
+                document.getElementById('secret-content').value = '';
+                showAlert('선생님께 전달되었습니다!', '💌');
+            };
+
+            const handleImageUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => setSelectedLifeImg(event.target.result);
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const renderCalendar = () => {
+                const now = new Date();
+                const lastDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+                const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).getDay();
+                const myHistory = {};
+                posts.filter(p => p.writerNo === userNo && p.type === 'book').forEach(p => {
+                    const d = new Date(p.timestamp).getDate();
+                    myHistory[d] = (myHistory[d] || 0) + 1;
+                });
+                let days = [];
+                for(let i=0; i<firstDay; i++) days.push(<div key={`empty-${i}`} className="p-2"></div>);
+                for(let i=1; i<=lastDate; i++) {
+                    const count = myHistory[i] || 0;
+                    const isToday = i === now.getDate();
+                    days.push(
+                        <div key={i} className={`relative p-1 h-14 border rounded-xl flex flex-col items-center ${isToday ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-transparent'}`}>
+                            <span className="text-[10px] font-bold text-slate-400">{i}</span>
+                            <div className="flex flex-wrap justify-center gap-0.5 mt-1">
+                                {count > 0 && (count <= 3 ? [...Array(count)].map((_,idx) => <i key={idx} className="fa-solid fa-book text-[8px] text-indigo-400"></i>) : <><i className="fa-solid fa-book text-[8px] text-indigo-400"></i><span className="text-[8px] font-bold text-indigo-600">3+</span></>)}
+                            </div>
+                        </div>
+                    );
+                }
+                return days;
+            };
+
+            if (!user || !userName) {
+                return (
+                    <div className="fixed inset-0 bg-indigo-600 flex items-center justify-center p-6 text-white font-sans">
+                        <div className="text-center w-full max-w-sm animate-pop">
+                            <div className="bg-white/10 backdrop-blur-xl p-10 rounded-[3.5rem] border border-white/20 shadow-2xl">
+                                <h1 className="text-4xl font-bold font-gaegu mb-2 text-yellow-300">오포초등학교</h1>
+                                <h2 className="text-xl font-bold font-gaegu mb-8 text-indigo-100 italic">디지털 북로드 V5</h2>
+                                <div className="space-y-4 text-gray-800">
+                                    <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="이름을 입력하세요" className="w-full p-4 rounded-2xl outline-none shadow-inner text-center font-bold" />
+                                    <input type="number" value={userNo} onChange={(e) => setUserNo(e.target.value)} placeholder="번호 입력" className="w-full p-4 rounded-2xl outline-none shadow-inner text-center font-bold" />
+                                    <button onClick={handleLogin} className="w-full bg-yellow-400 text-indigo-900 font-bold p-4 rounded-2xl text-xl active:scale-95 transition shadow-lg">입장하기! 🎒</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="max-w-xl mx-auto p-4 font-sans pb-32 min-h-screen">
+                    <header className="flex justify-between items-center mb-6 pt-4 px-2">
+                        <div className="flex items-center gap-4">
+                            <div className="w-14 h-14 rounded-2xl bg-white shadow-lg flex items-center justify-center text-indigo-200 text-2xl rotate-3"><i className="fa-solid fa-user"></i></div>
+                            <div>
+                                <h2 className="text-2xl font-bold text-slate-800 font-gaegu leading-none mb-1"><span className="text-indigo-600">{userName}</span> 작가님</h2>
+                                <div className="flex items-center gap-2"><span className="bg-indigo-500 text-white text-[9px] px-2 py-0.5 rounded-full font-bold">LV.1 새싹</span><span className="text-[10px] text-slate-400 font-bold tracking-widest">{userNo}번</span></div>
+                            </div>
+                        </div>
+                    </header>
+
+                    <div className="min-h-[70vh]">
+                        {activeTab === 'feed' && (
+                            <div className="space-y-6 animate-pop">
+                                <h3 className="font-bold text-slate-800 text-xl font-gaegu ml-2">우리 반 타임라인 💬</h3>
+                                {posts.length === 0 ? <div className="text-center py-20 text-slate-300 italic font-gaegu text-xl">아직 첫 글이 없어요.</div> : posts.map(post => {
+                                    const userKey = `${userNo}_${userName}`;
+                                    const isLiked = post.likes.includes(userKey);
+                                    return (
+                                        <div key={post.id} className="bg-white rounded-[2rem] p-6 shadow-sm border-4 border-white mb-4">
+                                            <div className="flex justify-between items-center mb-4">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-200"><i className="fa-solid fa-user"></i></div>
+                                                    <div><h5 className="font-bold text-slate-800 font-gaegu text-lg leading-tight">{post.writer}</h5><p className="text-[9px] text-slate-300 font-bold">{post.writerNo}번 작가</p></div>
+                                                </div>
+                                                <span className="text-[9px] font-bold bg-indigo-50 text-indigo-400 px-2 py-1 rounded-lg uppercase italic">
+                                                    {post.type === 'book' ? KDC_LABELS[post.category] : 'DAILY'}
+                                                </span>
+                                            </div>
+                                            {post.imageUrl && <img src={post.imageUrl} className="w-full rounded-2xl mb-4 border-2 border-slate-50 shadow-sm" alt="Post" />}
+                                            {post.type === 'book' && <div className="bg-indigo-50/50 p-4 rounded-2xl mb-4 border-l-4 border-indigo-400 shadow-inner"><h4 className="font-bold text-slate-800 font-gaegu">📖 {post.title}</h4><p className="text-[10px] text-indigo-400">{post.author}</p></div>}
+                                            <div className="text-sm text-slate-600 leading-relaxed mb-5 whitespace-pre-wrap px-1">{post.content}</div>
+                                            <div className="flex items-center gap-3 pt-4 border-t border-slate-50">
+                                                <button onClick={() => toggleLike(post.id)} className={`px-4 py-2 rounded-full border transition-all ${isLiked ? 'text-pink-500 bg-pink-50 border-pink-100' : 'text-slate-400 bg-slate-50 border-transparent'}`}>
+                                                    <i className={`fa-${isLiked ? 'solid' : 'regular'} fa-heart mr-1`}></i>{post.likes.length}
+                                                </button>
+                                                <button onClick={() => setShowComments(post)} className="px-4 py-2 rounded-full bg-slate-50 text-slate-400">
+                                                    <i className="fa-regular fa-comment mr-1"></i>{post.comments.length}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        {activeTab === 'write-book' && (
+                            <div className="bg-white rounded-[2rem] p-8 shadow-lg border-4 border-white animate-pop">
+                                <h3 className="text-3xl font-bold mb-6 text-slate-800 font-gaegu text-center underline decoration-indigo-100">📖 독서 기록장</h3>
+                                <div className="space-y-4">
+                                    <select id="book-category" className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-indigo-600 outline-none border-2 border-transparent focus:border-indigo-400">
+                                        {Object.entries(KDC_LABELS).map(([k,v]) => <option key={k} value={k}>{k} {v}</option>)}
+                                    </select>
+                                    <input id="book-title" placeholder="책 제목을 적어주세요" className="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-400 shadow-inner" />
+                                    <input id="book-author" placeholder="저자(지은이)" className="w-full p-4 bg-slate-50 rounded-2xl outline-none" />
+                                    <textarea id="book-content" placeholder="이 책을 읽고 내 생각이 어떻게 자라났나요?" className="w-full p-4 bg-slate-50 rounded-2xl h-48 outline-none resize-none leading-relaxed border-2 border-transparent focus:border-indigo-400 shadow-inner"></textarea>
+                                    <button onClick={() => savePost('book')} className="w-full bg-indigo-600 text-white font-bold p-5 rounded-3xl text-xl shadow-xl active:scale-95 transition-all">공유하기 🚀</button>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'write-life' && (
+                            <div className="bg-white rounded-[2rem] p-8 shadow-lg border-4 border-white animate-pop">
+                                <h3 className="text-3xl font-bold mb-6 text-slate-800 font-gaegu text-center underline decoration-emerald-100">✨ 오늘의 조각</h3>
+                                <div className="mb-4 text-center">
+                                    {selectedLifeImg && <div className="relative mb-4"><img src={selectedLifeImg} className="w-full rounded-2xl border-4 border-white shadow-md" alt="Preview" /><button onClick={() => setSelectedLifeImg(null)} className="absolute top-2 right-2 bg-black/50 text-white w-8 h-8 rounded-full flex items-center justify-center">×</button></div>}
+                                    <label className="flex items-center justify-center gap-2 w-full p-8 bg-slate-50 rounded-2xl border-4 border-dashed border-slate-100 cursor-pointer text-slate-400 font-bold hover:bg-slate-100 transition"><i className="fa-solid fa-camera text-3xl"></i> 사진 올리기(선택)<input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} /></label>
+                                </div>
+                                <textarea id="life-content" placeholder="오늘 있었던 재미있는 일을 자유롭게 기록해요." className="w-full p-4 bg-slate-50 rounded-2xl h-60 outline-none resize-none shadow-inner border-2 border-transparent focus:border-emerald-400"></textarea>
+                                <button onClick={() => savePost('life')} className="w-full bg-emerald-500 text-white font-bold p-5 rounded-3xl text-xl shadow-xl active:scale-95 transition mt-4">보관하기 📮</button>
+                            </div>
+                        )}
+
+                        {activeTab === 'secret' && (
+                            <div className="bg-pink-50 p-8 rounded-[2rem] border-4 border-white shadow-md animate-pop">
+                                <h3 className="text-3xl font-bold mb-4 text-slate-800 font-gaegu text-center text-pink-500 italic">📮 마음 우체통</h3>
+                                <div className="space-y-4 mb-6 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                                    {secrets.length === 0 ? <div className="text-center py-10 text-pink-200 italic font-gaegu text-xl">첫 편지를 기다리고 있어요!</div> : secrets.map(s => <div key={s.id} className="flex justify-end mb-2"><div className="bg-pink-500 text-white p-4 rounded-2xl rounded-tr-none text-sm shadow-md leading-relaxed">{s.content}<p className="text-[8px] opacity-60 mt-2 text-right font-bold uppercase tracking-widest">{s.date}</p></div></div>)}
+                                </div>
+                                <textarea id="secret-content" placeholder="선생님께 드릴 말씀이 있어요..." className="w-full p-4 bg-white rounded-2xl h-32 outline-none border-2 border-pink-200 text-sm shadow-inner"></textarea>
+                                <button onClick={sendSecret} className="w-full bg-pink-500 text-white font-bold p-4 rounded-2xl mt-4 active:scale-95 transition shadow-lg">보내기 💌</button>
+                            </div>
+                        )}
+
+                        {activeTab === 'admin' && (
+                            <div className="space-y-6 animate-pop">
+                                <div className="bg-white rounded-[2rem] p-8 shadow-sm border-4 border-white">
+                                    <h3 className="text-xl font-bold text-slate-800 font-gaegu mb-4"><i className="fa-solid fa-calendar-days text-indigo-400 mr-2"></i>나의 독서 마일리지 달력</h3>
+                                    <div className="grid grid-cols-7 gap-2 text-center text-[10px] font-bold text-slate-300 mb-2 italic"><div>SUN</div><div>MON</div><div>TUE</div><div>WED</div><div>THU</div><div>FRI</div><div>SAT</div></div>
+                                    <div className="grid grid-cols-7 gap-1">{renderCalendar()}</div>
+                                    <div className="mt-6 p-4 bg-indigo-50 rounded-2xl flex justify-between items-center">
+                                        <span className="text-xs font-bold text-indigo-500">누적 독서량</span>
+                                        <span className="text-2xl font-bold text-indigo-600 font-gaegu">{posts.filter(p => p.writerNo === userNo && p.type === 'book').length} 권</span>
+                                    </div>
+                                </div>
+                                <button onClick={() => { localStorage.clear(); location.reload(); }} className="w-full text-slate-300 underline text-[10px] font-bold py-10">LOGOUT / SYSTEM RESET</button>
+                            </div>
+                        )}
+                    </div>
+
+                    <nav className="fixed bottom-4 left-4 right-4 bg-white/90 backdrop-blur-md border-2 border-white shadow-2xl rounded-[2.5rem] px-6 py-4 flex justify-between items-end z-[4000]">
+                        {[ ['feed', 'house-chimney', '홈'], ['write-book', 'book-open-reader', '기록'], ['write-life', 'pen-fancy', '조각'], ['secret', 'envelope-heart', '우체통'], ['admin', 'star-of-life', '관리'] ].map(([tab, icon, label]) => (
+                            <button key={tab} onClick={() => setActiveTab(tab)} className={`flex flex-col items-center gap-1 transition-all flex-1 ${activeTab === tab ? 'text-indigo-600 scale-110 -translate-y-2' : 'text-slate-300'}`}><i className={`fa-solid fa-${icon} text-xl`}></i><span className="text-[8px] font-bold">{label}</span></button>
+                        ))}
+                    </nav>
+
+                    {showComments && (
+                        <div className="fixed inset-0 bg-black/60 z-[5000] flex flex-col justify-end backdrop-blur-sm">
+                            <div className="bg-white rounded-t-[3rem] p-8 w-full max-w-xl mx-auto border-t-8 border-indigo-400 shadow-2xl">
+                                <h4 className="font-bold text-center mb-8 font-gaegu text-3xl text-indigo-600 italic">응원 댓글 💬</h4>
+                                <div className="space-y-4 max-h-[40vh] overflow-y-auto mb-24 px-2 custom-scrollbar">
+                                    {showComments.comments.length === 0 ? <p className="text-center py-10 text-slate-300 italic font-gaegu text-xl">첫 댓글을 달아보세요!</p> : showComments.comments.map((c, i) => (
+                                        <div key={i} className="bg-slate-50 p-4 rounded-2xl border-2 border-white"><p className="text-[10px] font-bold text-indigo-500 mb-1">{c.writer} 작가님</p><p className="text-sm text-slate-700 font-medium">{c.content}</p></div>
+                                    ))}
+                                </div>
+                                <div className="absolute bottom-0 left-0 right-0 p-6 bg-white border-t flex gap-2 rounded-t-[2rem]">
+                                    <input value={commentInput} onChange={(e) => setCommentInput(e.target.value)} placeholder="응원의 한마디" className="flex-1 p-4 bg-slate-50 rounded-2xl outline-none font-medium" />
+                                    <button onClick={addComment} className="bg-indigo-600 text-white px-8 rounded-2xl font-bold">보내기</button>
+                                </div>
+                                <button onClick={() => setShowComments(null)} className="absolute top-8 right-8 text-slate-300 text-3xl">×</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {alert.show && (
+                        <div className="fixed inset-0 bg-black/40 z-[6000] flex items-center justify-center p-6 backdrop-blur-md">
+                            <div className="bg-white p-10 rounded-[3.5rem] text-center w-full max-w-xs shadow-2xl border-b-8 border-indigo-500">
+                                <div className="text-7xl mb-6">{alert.icon}</div><p className="font-bold text-slate-800 text-2xl mb-10 leading-tight font-gaegu">{alert.msg}</p>
+                                <button onClick={() => setAlert({ ...alert, show: false })} className="w-full bg-indigo-600 text-white p-5 rounded-3xl font-bold text-xl active:scale-95">확인</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
